@@ -1,0 +1,50 @@
+{
+  "settings": {
+    "dataset": "MegaDepth-1500",
+    "num_pairs": 300,
+    "ransac_thr": 2.5,
+    "solver": "poselib",
+    "note": "Quick scan subset. Results differ from full 1500-pair benchmark."
+  },
+  "results": {
+    "XFeat baseline (4096)": {
+      "auc": {"auc@5": 0.526, "auc@10": 0.658, "auc@20": 0.761},
+      "macc": {"5": 74.7, "10": 81.3, "20": 88.3}
+    },
+    "XFeat top_k=8192": {
+      "auc": {"auc@5": 0.557, "auc@10": 0.685, "auc@20": 0.778},
+      "macc": {"5": 77.0, "10": 84.0, "20": 88.0}
+    },
+    "XFeat + ratio 0.9": {
+      "auc": {"auc@5": 0.336, "auc@10": 0.491, "auc@20": 0.631},
+      "macc": {"5": 55.0, "10": 70.0, "20": 81.0}
+    },
+    "XFeat + ratio 0.85": {
+      "auc": {"auc@5": null, "auc@10": null, "auc@20": null},
+      "macc": {"5": 9.7, "10": 22.3, "20": 36.7},
+      "note": "AUC NaN - too few valid poses"
+    },
+    "XFeat + ratio 0.8": {
+      "auc": {"auc@5": 0.0, "auc@10": 0.0, "auc@20": 0.0},
+      "macc": {"5": 0.0, "10": 0.0, "20": 1.0},
+      "note": "Almost all matches filtered out"
+    },
+    "XFeat 8k + ratio 0.9": {
+      "auc": {"auc@5": null, "auc@10": null, "auc@20": null},
+      "macc": {"5": 37.7, "10": 53.0, "20": 66.0},
+      "note": "AUC NaN - too few valid poses"
+    },
+    "XFeat-star baseline (10k)": {
+      "auc": {"auc@5": 0.534, "auc@10": 0.675, "auc@20": 0.784},
+      "macc": {"5": 76.0, "10": 83.7, "20": 93.0}
+    },
+    "XFeat-star top_k=5000": {
+      "auc": {"auc@5": 0.504, "auc@10": 0.651, "auc@20": 0.767},
+      "macc": {"5": 72.7, "10": 84.3, "20": 90.7}
+    },
+    "XFeat-star + ratio 0.9": {
+      "auc": {"auc@5": 0.473, "auc@10": 0.622, "auc@20": 0.738},
+      "macc": {"5": 71.7, "10": 81.3, "20": 88.0}
+    }
+  }
+}
