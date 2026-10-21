@@ -37,6 +37,7 @@ class ScoringMode(StrEnum):
 
 
 class ScoreState(StrEnum):
+    AUTO_SINGLE = "AUTO_SINGLE"
     AUTO_STABLE = "AUTO_STABLE"
     REPRODUCIBLE_EXACT = "REPRODUCIBLE_EXACT"
     CONSENSUS_CANDIDATE = "CONSENSUS_CANDIDATE"
@@ -63,6 +64,12 @@ class QuestionCreate(BaseModel):
     rule_config: dict[str, Any] = Field(default_factory=dict)
     rubric: list[dict[str, Any]] = Field(default_factory=list)
     review_policy: str = "auto_if_verified"
+
+    @model_validator(mode='after')
+    def valid_region(self):
+        if self.rule_config.get('region'):
+            self.rule_config['region'] = RegionInput.model_validate(self.rule_config['region']).model_dump(exclude_none=True)
+        return self
 
 
 class AnswerInput(BaseModel):
@@ -104,6 +111,7 @@ class DocumentTextUpdate(BaseModel):
 
 
 class LLMSettingsUpdate(BaseModel):
+    grading_profile: Literal['legacy', 'daily', 'exam'] | None = None
     api_key: str | None = Field(default=None, max_length=500)
     provider: str | None = Field(default=None, max_length=30)
     model: str = Field(min_length=1, max_length=200)
@@ -121,6 +129,27 @@ class LLMSettingsUpdate(BaseModel):
 
 class GradeBatchRequest(BaseModel):
     submission_ids: list[str] = Field(default_factory=list, max_length=1000)
+
+
+class RegionInput(BaseModel):
+    page: int = Field(ge=1)
+    x: float = Field(ge=0, lt=1)
+    y: float = Field(ge=0, lt=1)
+    width: float = Field(gt=0, le=1)
+    height: float = Field(gt=0, le=1)
+    page_aspect: float | None = Field(default=None, gt=0, le=20)
+
+    @model_validator(mode='after')
+    def within_page(self):
+        if self.x + self.width > 1.000001 or self.y + self.height > 1.000001:
+            raise ValueError('答题区域超出页面')
+        return self
+
+
+class TrainingApproval(BaseModel):
+    redacted_text: str = Field(min_length=1)
+    approved_by: str = Field(min_length=1, max_length=100)
+    expected_review_id: str | None = None
 
 
 class BulkReviewRequest(BaseModel):

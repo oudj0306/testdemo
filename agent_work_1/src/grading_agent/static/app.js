@@ -73,6 +73,9 @@ async function loadAssessment(){
  $('documents').innerHTML=docs.length?docs.map(d=>'<button data-doc="'+d.id+'">'+esc(({question_paper:'原试卷',answer_key:'答案册',rubric:'评分标准',reference:'参考资料'})[d.kind])+' · '+esc(d.media_type.includes('word')?'Word':d.media_type.split('/')[1])+'　查看原件</button>').join(''):'<p class="muted">还没有资料，请上传原试卷。</p>';
  document.querySelectorAll('[data-doc]').forEach(b=>b.onclick=()=>showPreview('document',b.dataset.doc));
  $('questions').innerHTML=a.questions.length?a.questions.map(q=>'<details class="question" open><summary>第 '+esc(q.question_no)+' 题 · '+q.max_score+' 分 <span class="badge">'+(q.answer_key_state==='candidate'?'待确认':'已确认')+'</span></summary><p>'+esc(q.prompt)+'</p><h3>参考答案</h3><pre>'+esc(typeof q.answer_key==='string'?q.answer_key:JSON.stringify(q.answer_key))+'</pre><h3>评分细则</h3>'+q.rubric.map(r=>'<p>'+esc(r.criterion)+' <b>'+esc(r.score)+' 分</b></p>').join('')+(q.rubric.length?'':'<p class="muted">根据标准答案及题目规则评分。</p>')+'</details>').join(''):'<p class="empty">上传试卷后，点击 AI 生成答案。</p>';
+ setupRegionEditor(docs);
+ $('exportTeacher').href='/api/assessments/'+a.id+'/training-samples?kind=teacher';
+ $('exportPseudo').href='/api/assessments/'+a.id+'/training-samples?kind=pseudo';
  await submissions();
  await refreshBatches(a.id);
 }
@@ -150,7 +153,7 @@ async function openSubmission(id,{force=false}={}){
   const needs=!g||(g.needs_review&&g.final_score==null);
   const reasons=g?(needs?g.reason_codes.map(code=>reviewReasons[code]||code).join(' / '):g.final_score!=null?'已人工确认 · 可再次调整':'自动通过 · 非人工复核'):'尚未批阅';
   $('questionArea').innerHTML='<div class="question"><b>第 '+esc(q.question_no)+' 题</b><p>'+esc(reference.prompt)+'</p><div class="answer-comparison"><div><label>学生作答<textarea data-answer="'+q.id+'" aria-label="学生作答校对">'+esc(r?.raw_text||'')+'</textarea></label><p class="muted small">可校对识别文字。修改后需保存并重新批阅。</p><button id="saveAnswers" class="text-button">保存本题校对</button></div><div><h3>参考答案'+(g?.snapshot?.question?' · 批改时版本':'')+'</h3><pre>'+esc(answer||'未提供参考答案')+'</pre><h3>评分标准</h3>'+(reference.rubric?.length?reference.rubric.map(rr=>'<p>'+esc(rr.criterion)+' <b>'+esc(rr.score)+' 分</b></p>').join(''):'<p class="muted">按标准答案和题目规则评分</p>')+'</div></div><p class="'+(needs?'pending':'score')+'">'+(g?'当前得分 '+fmt(g.effective_score)+' / '+g.max_score+(needs?' · 建议复核':' · 已出分'):'尚未批阅')+'</p><p class="muted small">'+esc(reasons)+'</p>'+(g?'<details><summary>展开评分依据</summary><pre>'+esc(g.evidence.join('\n'))+'</pre></details><form data-review="'+g.id+'"><div class="toolbar"><label>复核分数<input name="score" aria-label="复核分数" type="number" min="0" max="'+g.max_score+'" step="any" required></label><label style="flex:1">复核说明<input name="reason" aria-label="复核说明" placeholder="可选，建议改分时填写" style="width:100%" maxlength="1000"></label><button>'+(g.latest_review_id?'保存再次复核':'保存人工复核')+'</button></div></form>':'<p class="helper-note">先到智能批阅页处理答卷，再在这里复核成绩。</p>')+'</div>';
-  if(g)$('questionArea').querySelector('[name=score]').value=g.effective_score??'';
+  if(g){$('questionArea').querySelector('[name=score]').value=g.effective_score??'';const approve=document.createElement('button');approve.className='secondary';approve.textContent='脱敏并批准训练样本';approve.onclick=()=>openTraining(g,r);$('questionArea').append(approve);if(g.score_state==='AUTO_SINGLE'){const label=document.createElement('p');label.textContent='日常作业 · 单次自动评分（非双评一致）';$('questionArea').append(label);}}
   $('questionArea').querySelectorAll('input,textarea').forEach(e=>e.dataset.initial=e.value);
   action('saveAnswers',async()=>{
    const input=$('questionArea').querySelector('[data-answer]');
@@ -200,8 +203,9 @@ async function refreshBatches(id){
   $('queueState').textContent=active.length?activeJobs.size+' 份处理中':'没有运行中的任务';
   $('queueState').className='badge '+(active.length?'':'neutral');
   const shown=active.length?active:rows.slice(0,1);
-  $('batchResults').innerHTML=shown.map(b=>'<div class="batch-progress"><span>'+esc(new Date(b.created_at).toLocaleString())+' · '+(b.status==='processing'?'正在处理':'最近一批')+'</span><progress value="'+(b.success_count+b.failed_count)+'" max="'+Math.max(1,b.total_count)+'"></progress><span>'+b.success_count+' / '+b.total_count+' 处理完成'+(b.duplicate_count?' · '+b.duplicate_count+' 份重复跳过':'')+(b.failed_count?' · '+b.failed_count+' 份失败':'')+'</span>'+(b.failed_count?'<details><summary>查看失败原因</summary>'+b.items.filter(i=>i.error).map(i=>'<p class="batch-error">'+esc(i.filename)+'：'+esc(i.error)+'</p>').join('')+'</details>':'')+'</div>').join('');
+  $('batchResults').innerHTML=shown.map(b=>'<div class="batch-progress"><span>'+esc(new Date(b.created_at).toLocaleString())+' · '+(b.status==='processing'?'正在处理':'最近一批')+'</span><progress value="'+(b.success_count+b.failed_count)+'" max="'+Math.max(1,b.total_count)+'"></progress><span>'+b.success_count+' / '+b.total_count+' 处理完成'+(b.duplicate_count?' · '+b.duplicate_count+' 份重复跳过':'')+(b.failed_count?' · '+b.failed_count+' 份失败':'')+'</span>'+'<button class="secondary" data-performance="'+b.id+'">查看耗时与用量</button><div id="perf-'+b.id+'"></div>'+(b.failed_count?'<details><summary>查看失败原因</summary>'+b.items.filter(i=>i.error).map(i=>'<p class="batch-error">'+esc(i.filename)+'：'+esc(i.error)+'</p>').join('')+'</details>':'')+'</div>').join('');
   await submissions();
+  document.querySelectorAll('[data-performance]').forEach(button=>button.onclick=async()=>{try{const p=await api('/api/batches/'+button.dataset.performance+'/performance');$('perf-'+button.dataset.performance).textContent='总耗时 '+(p.wall_ms/1000).toFixed(2)+' 秒；请求 '+p.requests+' 次；输入 '+p.tokens.input_tokens+' / 输出 '+p.tokens.output_tokens+' / 缓存 '+p.tokens.cached_tokens+' token；失败 '+p.failed_requests+'；补请求 '+p.retries+'。未配置价格，不估算费用。';}catch(e){notice(e.message,true);}});
   if(active.length)batchTimer=setTimeout(()=>refreshBatches(id),2500);
  }catch(e){if($('assessment').value===id){notice('进度读取失败，稍后自动重试：'+e.message,true);batchTimer=setTimeout(()=>refreshBatches(id),5000);}}
 }
@@ -306,10 +310,63 @@ $('llmProvider').addEventListener('change',()=>{if(displayedProvider==='custom')
 async function loadSettings(){const [s,c]=await Promise.all([api('/api/settings'),api('/api/model-catalog')]);modelProviders=c.providers||[];savedConnection=s;
  $('llmProvider').innerHTML=modelProviders.map(p=>'<option value="'+esc(p.id)+'">'+esc(p.name)+'</option>').join('')+'<option value="custom">自定义连接</option>';
  $('llmProvider').value=s.provider||'custom';customConnectionDraft=s.provider==='custom'?{model:s.model,base_url:s.base_url}:{model:'',base_url:''};$('llmModel').value=s.model;$('llmBaseUrl').value=s.base_url;renderModelProvider(s.model);
- $('llmPasses').value=String(s.llm_grading_passes);$('llmExtract').checked=s.llm_extract_answers;$('llmThinking').checked=s.enable_thinking;$('llmKey').value='';$('settingsStatus').textContent=s.api_key_set?'当前密钥：'+s.api_key_masked:'尚未配置密钥，过程题与 AI 生成答案将不可用。';$('ocrProvider').value=s.ocr_provider;$('ocrDevice').value=s.ocr_device;$('localOcrFirst').checked=s.local_ocr_first;$('reviewMode').value=s.review_mode;$('sampleRate').value=String(Math.round(s.review_sample_rate*100));$('confidenceThreshold').value=s.review_confidence_threshold;}
-action('saveSettings',async()=>{const key=$('llmKey').value.trim(),connection=selectedModelConnection();await api('/api/settings',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({api_key:key||null,...connection,llm_grading_passes:Number($('llmPasses').value),llm_extract_answers:$('llmExtract').checked,enable_thinking:$('llmThinking').checked,review_mode:$('reviewMode').value,review_sample_rate:Number($('sampleRate').value)/100,review_confidence_threshold:Number($('confidenceThreshold').value)})});await loadSettings();await refreshHealth();$('llmTestResult').textContent='设置已保存。可测试连接后再批阅。';notice('模型与复核策略已保存；仅影响后续批改，不自动改动已有成绩。');});
+ $('gradingProfile').value=s.grading_profile||'legacy';$('llmPasses').value=String(s.llm_grading_passes);$('llmExtract').checked=s.llm_extract_answers;$('llmThinking').checked=s.enable_thinking;$('llmKey').value='';$('settingsStatus').textContent=s.api_key_set?'当前密钥：'+s.api_key_masked:'尚未配置密钥，过程题与 AI 生成答案将不可用。';$('ocrProvider').value=s.ocr_provider;$('ocrDevice').value=s.ocr_device;$('localOcrFirst').checked=s.local_ocr_first;$('reviewMode').value=s.review_mode;$('sampleRate').value=String(Math.round(s.review_sample_rate*100));$('confidenceThreshold').value=s.review_confidence_threshold;}
+action('saveSettings',async()=>{const key=$('llmKey').value.trim(),connection=selectedModelConnection();await api('/api/settings',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({api_key:key||null,...connection,grading_profile:$('gradingProfile').value,llm_grading_passes:Number($('llmPasses').value),llm_extract_answers:$('llmExtract').checked,enable_thinking:$('llmThinking').checked,review_mode:$('reviewMode').value,review_sample_rate:Number($('sampleRate').value)/100,review_confidence_threshold:Number($('confidenceThreshold').value)})});await loadSettings();await refreshHealth();$('llmTestResult').textContent='设置已保存。可测试连接后再批阅。';notice('模型与复核策略已保存；仅影响后续批改，不自动改动已有成绩。');});
 action('testLlm',async()=>{const result=await api('/api/settings/test-connection',{method:'POST'});$('llmTestResult').textContent=result.message;notice(result.message);});
 action('saveRuntime',async()=>{const saved=await api('/api/settings');await api('/api/settings',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({model:saved.model,base_url:saved.base_url,llm_grading_passes:saved.llm_grading_passes,llm_extract_answers:saved.llm_extract_answers,enable_thinking:saved.enable_thinking,ocr_provider:$('ocrProvider').value,ocr_device:$('ocrDevice').value,local_ocr_first:$('localOcrFirst').checked})});await refreshHealth();notice('识别设置已保存。环境检查为可选，不影响远程模型流程。');});
 action('checkOcr',async()=>{const result=await api('/api/runtime/ocr-check',{method:'POST'});await refreshHealth();$('ocrCheckResult').textContent=result.ok?'实际设备：'+result.device+'；本次首次调用 '+result.durations_seconds[0]+' 秒，第二次 '+result.durations_seconds[1]+' 秒。'+result.message:result.message;notice(result.ok?'本地自检通过，当前服务中的 OCR 模型已预热。':'本地自检失败，请查看设备错误信息。',!result.ok);});
 function wrapTables(container){container.querySelectorAll('table').forEach(table=>{const wrapper=document.createElement('div');wrapper.className='table-scroll';wrapper.tabIndex=0;wrapper.setAttribute('aria-label','可横向滚动的数据表格');table.replaceWith(wrapper);wrapper.append(table);});}
 (async()=>{await Promise.all([refreshHealth(),assessments(),loadSettings()].map(p=>p.catch(e=>notice(e.message,true))));})();
+
+// Region coordinates always refer to the source page, independent of CSS scaling.
+let regionImage=null, regionSelection=null, regionStart=null, regionDocumentId=null, regionLoadedPage=null, regionPreviewUrl=null, regionSaved=false;
+function setupRegionEditor(docs){
+ const supported=docs.filter(d=>d.kind==='question_paper'&&(d.media_type==='application/pdf'||d.media_type.startsWith('image/')));
+ $('regionDocument').innerHTML=supported.map((d,i)=>'<option value="'+esc(d.id)+'">原试卷 · 第 '+(i+1)+' 份资料</option>').join('');
+ $('regionQuestion').innerHTML=current.questions.map(q=>'<option value="'+esc(q.id)+'">第 '+esc(q.question_no)+' 题'+(q.rule_config?.region?' · 已配置':'')+'</option>').join('');
+ $('editRegions').disabled=!supported.length||!current.questions.length;
+}
+function drawRegion(){
+ const canvas=$('regionCanvas'),ctx=canvas.getContext('2d');if(!regionImage)return;
+ ctx.clearRect(0,0,canvas.width,canvas.height);ctx.drawImage(regionImage,0,0);
+ if(regionSelection){const r=regionSelection;ctx.fillStyle='rgba(44,100,240,.15)';ctx.fillRect(r.x*canvas.width,r.y*canvas.height,r.width*canvas.width,r.height*canvas.height);ctx.strokeStyle='#245de0';ctx.lineWidth=Math.max(2,canvas.width/400);ctx.strokeRect(r.x*canvas.width,r.y*canvas.height,r.width*canvas.width,r.height*canvas.height);}
+}
+function selectSavedRegion(){
+ const q=current.questions.find(q=>q.id===$('regionQuestion').value),r=q?.rule_config?.region;
+ regionSelection=r&&r.page===regionLoadedPage?{...r}:null;drawRegion();
+ $('regionStatus').textContent=regionSelection?'已载入该题区域，可重新拖动修改':'拖动鼠标框选学生实际作答区域，避免印刷题干';
+}
+$('editRegions').onclick=()=>{regionSaved=false;regionImage=null;regionLoadedPage=null;regionSelection=null;$('regionCanvas').width=0;$('regionCrop').hidden=true;$('regionDialog').showModal();};
+$('closeRegions').onclick=()=>{$('regionDialog').close();};
+$('regionDialog').addEventListener('close',()=>{if(regionPreviewUrl)URL.revokeObjectURL(regionPreviewUrl);if(regionSaved)loadAssessment().catch(e=>notice(e.message,true));});
+$('regionDocument').onchange=()=>{regionLoadedPage=null;regionSelection=null;$('regionStatus').textContent='请重新加载页面';};
+$('regionPage').oninput=()=>{regionLoadedPage=null;regionSelection=null;$('regionStatus').textContent='请重新加载页面';};
+$('regionQuestion').onchange=selectSavedRegion;
+action('loadRegionPage',async()=>{
+ const doc=$('regionDocument').value,page=Number($('regionPage').value);if(!Number.isInteger(page)||page<1)throw Error('请输入有效页码');
+ const response=await fetch('/api/assessments/'+aid()+'/template-page?document_id='+encodeURIComponent(doc)+'&page='+page);
+ if(!response.ok)throw Error('页面加载失败，请检查页码和资料类型');
+ const url=URL.createObjectURL(await response.blob());
+ try{const image=new Image();image.src=url;await image.decode();regionImage=image;regionDocumentId=doc;regionLoadedPage=page;$('regionCanvas').width=image.naturalWidth;$('regionCanvas').height=image.naturalHeight;selectSavedRegion();}finally{URL.revokeObjectURL(url);}
+});
+const regionCanvas=$('regionCanvas');
+function regionPoint(e){const rect=regionCanvas.getBoundingClientRect();return {x:Math.max(0,Math.min(1,(e.clientX-rect.left)/rect.width)),y:Math.max(0,Math.min(1,(e.clientY-rect.top)/rect.height))};}
+regionCanvas.onpointerdown=e=>{if(!regionLoadedPage)return;regionStart=regionPoint(e);regionCanvas.setPointerCapture(e.pointerId);};
+regionCanvas.onpointermove=e=>{if(!regionStart)return;const end=regionPoint(e);regionSelection={page:regionLoadedPage,x:Math.min(end.x,regionStart.x),y:Math.min(end.y,regionStart.y),width:Math.abs(end.x-regionStart.x),height:Math.abs(end.y-regionStart.y),page_aspect:regionCanvas.width/regionCanvas.height};drawRegion();};
+regionCanvas.onpointerup=()=>{regionStart=null;};regionCanvas.onpointercancel=()=>{regionStart=null;};
+function selectedRegion(){if(!regionSelection||!regionLoadedPage||regionSelection.width<=0||regionSelection.height<=0)throw Error('请先框选有效区域');return regionSelection;}
+action('previewRegion',async()=>{
+ const response=await fetch('/api/assessments/'+aid()+'/template-preview?document_id='+encodeURIComponent(regionDocumentId),json(selectedRegion()));
+ if(!response.ok)throw Error('裁切失败，请检查区域');if(regionPreviewUrl)URL.revokeObjectURL(regionPreviewUrl);regionPreviewUrl=URL.createObjectURL(await response.blob());$('regionCrop').src=regionPreviewUrl;$('regionCrop').hidden=false;
+});
+async function persistRegion(remove){
+ const region=remove?null:selectedRegion(),assessment=await api('/api/assessments/'+aid()),q=assessment.questions.find(q=>q.id===$('regionQuestion').value);
+ if(!q)throw Error('题目已变化，请重新打开模板');const config={...q.rule_config};if(remove)delete config.region;else config.region=region;
+ await api('/api/questions/'+q.id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({...q,rule_config:config})});
+ q.rule_config=config;current.questions=assessment.questions;regionSaved=true;selectSavedRegion();$('regionStatus').textContent=remove?'区域已移除':'区域已保存，下次识别复用；已保存作答保持原样';
+}
+action('saveRegion',()=>persistRegion(false));action('removeRegion',()=>persistRegion(true));
+let trainingGrade=null;
+function openTraining(g,response){trainingGrade=g;$('trainingText').value=response?.raw_text||'';$('trainingApprover').value='';$('trainingConsent').checked=false;$('trainingDialog').showModal();}
+$('closeTraining').onclick=()=>{$('trainingDialog').close();};
+action('approveTraining',async()=>{if(!$('trainingConsent').checked)throw Error('请先检查脱敏文本并勾选批准');await api('/api/grade-items/'+trainingGrade.id+'/training-approval',json({redacted_text:$('trainingText').value,approved_by:$('trainingApprover').value,expected_review_id:trainingGrade.latest_review_id||null}));$('trainingDialog').close();notice('已批准脱敏样本。标签来源由实际人工复核记录决定。');});

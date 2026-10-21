@@ -2,7 +2,11 @@
 from __future__ import annotations
 
 import logging
-from contextlib import nullcontext
+import hashlib
+import json
+from contextlib import nullcontext, ExitStack
+from datetime import datetime, timezone
+from uuid import uuid4
 from threading import Event, Thread
 from typing import Callable
 
@@ -11,6 +15,7 @@ from ..db import transaction, utc_now
 from ..repository import complete_batch, get_assessment, get_submission, new_id
 from .grading import grade_submission
 from .work_locks import SubmissionBusyError, submission_work
+from .telemetry import scope, timed, event
 
 logger = logging.getLogger(__name__)
 
@@ -60,6 +65,15 @@ class BatchQueue:
                 JOIN grading_batches b ON b.id=i.batch_id
                 WHERE i.status='queued' ORDER BY i.created_at LIMIT 1""").fetchone()
             if row:
+                if get_settings().grading_profile == 'daily' and row['auto_grade']:
+                    rows = connection.execute('''SELECT i.*,j.content,j.media_type,j.auto_grade,j.answer_layout,b.assessment_id
+                        FROM grading_batch_items i JOIN batch_jobs j ON j.item_id=i.id
+                        JOIN grading_batches b ON b.id=i.batch_id
+                        WHERE i.status='queued' AND i.batch_id=? AND j.auto_grade=1
+                        ORDER BY i.created_at,i.id LIMIT 8''', (row['batch_id'],)).fetchall()
+                    connection.executemany("UPDATE grading_batch_items SET status='extracting' WHERE id=?",
+                                           [(r['id'],) for r in rows])
+                    return {'daily_group': [dict(r) for r in rows]}
                 connection.execute("UPDATE grading_batch_items SET status='extracting' WHERE id=?", (row['id'],))
                 return dict(row)
         return None
@@ -69,7 +83,10 @@ class BatchQueue:
             try:
                 job = self.claim()
                 if job:
-                    self.process(job)
+                    if 'daily_group' in job:
+                        self.process_daily(job['daily_group'])
+                    else:
+                        self.process(job)
                 else:
                     self.stop.wait(0.25)
             except Exception:
@@ -81,7 +98,11 @@ class BatchQueue:
             guard = (submission_work(get_settings().database_path, job['submission_id'], blocking=False)
                      if job['submission_id'] else nullcontext())
             with guard:
-                self.process_submission(job)
+                settings = get_settings()
+                with scope(settings, batch_id=job['batch_id'], assessment_id=job['assessment_id'],
+                           submission_id=job.get('submission_id')):
+                    self.queue_wait(job)
+                    self.process_submission(job)
             with transaction() as connection:
                 connection.execute("UPDATE grading_batch_items SET status='completed',error=NULL WHERE id=?", (job['id'],))
                 # Original has been preserved by ingestion; discard the queue-only copy.
@@ -103,10 +124,12 @@ class BatchQueue:
         assessment = get_assessment(job['assessment_id'])
         submission = get_submission(job['submission_id']) if job['submission_id'] else None
         if submission and submission['status'] in {'uploaded', 'extraction_failed'} and self.prepare:
-            submission = self.prepare(submission['id'])
+            with timed('extraction'):
+                submission = self.prepare(submission['id'])
         if submission is None:
-            submission = self.persist(assessment, job['student_ref'], job['content'], job['media_type'],
-                                      None, job['answer_layout'])
+            with timed('extraction'):
+                submission = self.persist(assessment, job['student_ref'], job['content'], job['media_type'],
+                                          None, job['answer_layout'])
             with transaction() as connection:
                 connection.execute("UPDATE grading_batch_items SET submission_id=? WHERE id=?", (submission['id'], job['id']))
         if submission.get('extraction_warning'):
@@ -115,6 +138,90 @@ class BatchQueue:
             with transaction() as connection:
                 connection.execute("UPDATE grading_batch_items SET status='grading' WHERE id=?", (job['id'],))
             grade_submission(submission['id'], get_settings(), pending_only=True)
+        return submission
+
+    @staticmethod
+    def queue_wait(job):
+        wait = max(0, (datetime.now(timezone.utc) - datetime.fromisoformat(job['created_at'])).total_seconds() * 1000)
+        event('queue', wait)
+
+    @staticmethod
+    def finish(job, error=None, requeue=False):
+        with transaction() as db:
+            db.execute('UPDATE grading_batch_items SET status=?,error=? WHERE id=?',
+                       ('queued' if requeue else 'failed' if error else 'completed',
+                        str(error)[:500] if error else None, job['id']))
+            if not error and not requeue:
+                db.execute('DELETE FROM batch_jobs WHERE item_id=?', (job['id'],))
+
+    def process_daily(self, jobs):
+        """Extract a bounded cohort first, then grade each shared question."""
+        from ..repository import questions_for_submission
+        from ..db import utc_now
+        from .grading import requires_model
+        from .bulk_grader import grade_daily_items
+        settings = get_settings()
+        ready, groups = [], {}
+        batch_id = jobs[0]['batch_id']
+        with ExitStack() as guards, scope(settings, batch_id=batch_id,
+                                         assessment_id=jobs[0]['assessment_id'], submission_id=None):
+            try:
+                for job in jobs:
+                    try:
+                        had_submission = bool(job.get('submission_id'))
+                        if job.get('submission_id'):
+                            guards.enter_context(submission_work(settings.database_path, job['submission_id'], blocking=False))
+                        with scope(settings, submission_id=job.get('submission_id')):
+                            self.queue_wait(job)
+                            submission = self.process_submission({**job, 'auto_grade': False})
+                        job['submission_id'] = submission['id']
+                        if not had_submission:
+                            guards.enter_context(submission_work(settings.database_path, submission['id'], blocking=False))
+                        if not any(j['submission_id'] == submission['id'] for j, *_ in ready):
+                            _, questions, responses = questions_for_submission(submission['id'])
+                            current = get_submission(submission['id'])
+                            scored = {g['question_id'] for g in current['grade_items'] if g['score'] is not None or g.get('final_score') is not None}
+                            pending = [q for q in questions if q['id'] not in scored]
+                            expected = {q['id']: (q, responses.get(q['id'])) for q in pending}
+                            prepared = {}
+                            ready.append((job, prepared, expected, utc_now()))
+                            for q in pending:
+                                response = responses.get(q['id'])
+                                if requires_model(q, response):
+                                    # A teacher may edit standards between two extractions.
+                                    # Never mix the old and new snapshots in one request.
+                                    key = (q['id'], hashlib.sha256(json.dumps(q, ensure_ascii=False,
+                                           sort_keys=True).encode()).hexdigest())
+                                    groups.setdefault(key, (q, []))[1].append((prepared, response))
+                        else:
+                            self.finish(job)
+                    except SubmissionBusyError:
+                        self.finish(job, requeue=True)
+                    except Exception as exc:
+                        self.finish(job, exc)
+                with transaction() as db:
+                    db.executemany("UPDATE grading_batch_items SET status='grading' WHERE id=?", [(j['id'],) for j, *_ in ready])
+                for question, members in groups.values():
+                    items, by_id = [], {}
+                    for prepared, response in members:
+                        aid = uuid4().hex
+                        items.append({'answer_id': aid, 'answer': response['raw_text']})
+                        by_id[aid] = prepared
+                    decisions = grade_daily_items(question, items, settings)
+                    for aid, decision in decisions.items():
+                        by_id[aid][question['id']] = decision
+                for job, prepared, expected, started_at in ready:
+                    try:
+                        grade_submission(job['submission_id'], settings, pending_only=True,
+                                         prepared=prepared, expected=expected, started_at=started_at)
+                        self.finish(job)
+                    except Exception as exc:
+                        self.finish(job, exc)
+            except Exception as exc:
+                for job, *_ in ready:
+                    self.finish(job, exc)
+            finally:
+                complete_batch(batch_id)
 
 
 def enqueue_saved(assessment_id: str, submission_ids: list[str]) -> dict:

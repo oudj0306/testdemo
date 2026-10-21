@@ -68,6 +68,7 @@ def cache_key(settings: Settings, question: dict[str, Any], answer: str,
             "version": CACHE_VERSION, "prompt_version": prompt_version,
             "model": settings.openai_model, "base_url": settings.openai_base_url,
             "enable_thinking": settings.enable_thinking,
+            "grading_profile": settings.grading_profile,
             "passes": settings.llm_grading_passes, "review_mode": settings.review_mode,
             "question": question, "review_revision": revision,
             # Do not trim, normalize, or semantically match student work.
@@ -134,14 +135,15 @@ class StableGradeCache:
                 except (sqlite3.Error, OSError):
                     LOGGER.warning("Could not release grade-cache lease; it will expire")
 
-    def get(self, key: str, max_score: float) -> GradeDecision | None:
+    def get(self, key: str, max_score: float, allow_single: bool = False) -> GradeDecision | None:
         try:
             with self._connect() as db:
                 row = db.execute("SELECT decision,independent_passes,created_at FROM stable_grades WHERE cache_key=?", (key,)).fetchone()
-            if row is None or row[1] < 2:
+            if row is None or row[1] < (1 if allow_single else 2):
                 return None
             data = json.loads(row[0])
-            if data["needs_review"] is not False or data["score_state"] != ScoreState.CONSENSUS_CANDIDATE:
+            expected_state = ScoreState.AUTO_SINGLE if allow_single else ScoreState.CONSENSUS_CANDIDATE
+            if data["needs_review"] is not False or data["score_state"] != expected_state:
                 return None
             if not isinstance(data["evidence"], list) or not data["evidence"]:
                 return None
@@ -158,8 +160,9 @@ class StableGradeCache:
             LOGGER.warning("Invalid or unavailable grade cache entry; grading normally")
             return None
 
-    def put(self, key: str, decision: GradeDecision, pass_count: int) -> None:
-        if pass_count < 2 or decision.needs_review or decision.score_state != ScoreState.CONSENSUS_CANDIDATE or not decision.evidence:
+    def put(self, key: str, decision: GradeDecision, pass_count: int, allow_single: bool = False) -> None:
+        expected_state = ScoreState.AUTO_SINGLE if allow_single else ScoreState.CONSENSUS_CANDIDATE
+        if pass_count < (1 if allow_single else 2) or decision.needs_review or decision.score_state != expected_state or not decision.evidence:
             return
         try:
             encoded = json.dumps(asdict(decision), ensure_ascii=False, separators=(",", ":"), allow_nan=False)

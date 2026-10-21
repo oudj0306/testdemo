@@ -19,7 +19,7 @@ def apply_review_policy(decision, question, response, settings, submission_id):
     reasons = []
     if question.get('answer_key_state') != 'verified':
         reasons.append('provisional_answer_key')
-    if settings.review_mode == 'strict' or question.get('rule_config', {}).get('force_review'):
+    if settings.grading_profile == 'exam' or settings.review_mode == 'strict' or question.get('rule_config', {}).get('force_review'):
         reasons.append('teacher_review_policy')
     if response and response.get('extraction_source') != 'manual':
         confidence = response.get('ocr_confidence')
@@ -43,9 +43,9 @@ def apply_review_policy(decision, question, response, settings, submission_id):
     if reasons:
         decision.needs_review = True
         decision.reason_codes = list(dict.fromkeys([*decision.reason_codes, *reasons]))
-    if not decision.needs_review and decision.grader_kind == 'llm':
+    if not decision.needs_review and decision.grader_kind == 'llm' and decision.score_state != ScoreState.AUTO_SINGLE:
         decision.score_state = ScoreState.AUTO_STABLE
     if question.get('answer_key_state') != 'verified' and decision.score is not None:
         decision.score_state = ScoreState.CONSENSUS_CANDIDATE
-    decision.evidence.append(f"review_policy=v2;mode={settings.review_mode};sample_rate={settings.review_sample_rate};minimum_extraction_confidence={confidence_threshold(question, settings)}")
+    decision.evidence.append(f"review_policy=v2;mode={settings.review_mode};profile={settings.grading_profile};sample_rate={settings.review_sample_rate};minimum_extraction_confidence={confidence_threshold(question, settings)}")
     return decision

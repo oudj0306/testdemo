@@ -200,8 +200,8 @@ def extract_answers_with_model(
     apply_provider_options(payload, settings.openai_base_url, settings.enable_thinking)
     request = model_request(payload, settings)
     try:
-        with urllib.request.urlopen(request, timeout=180) as response:
-            data = json.loads(response.read().decode("utf-8"))
+        from .telemetry import request_json
+        data, _ = request_json(request, settings, 'extract', 180)
     except urllib.error.HTTPError as exc:
         detail = exc.read().decode("utf-8", errors="replace")[:800]
         raise RuntimeError(f"OpenAI HTTP {exc.code}: {detail}") from exc

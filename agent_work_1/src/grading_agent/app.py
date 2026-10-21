@@ -79,6 +79,8 @@ async def lifespan(_: FastAPI):
 app = FastAPI(title="作业/试卷批改 Agent", version="0.1.0", lifespan=lifespan)
 from .workspace_views import router as workspace_router
 app.include_router(workspace_router)
+from .optimization_api import router as optimization_router
+app.include_router(optimization_router)
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 
@@ -137,7 +139,10 @@ def persist_submission(
     for question in assessment["questions"]:
         crop = crops.get(question["id"])
         if crop and question['id'] not in retained_ids:
-            text, confidence, source = ocr.extract(crop)
+            from .services.telemetry import timed, event
+            with timed('local_ocr'):
+                text, confidence, source = ocr.extract(crop)
+            event('local_ocr_result', success=bool(text.strip() and confidence is not None and confidence >= 0.85))
             upsert_response(
                 submission["id"], question["id"], text, confidence, False, source, str(crop),
             )
@@ -239,6 +244,7 @@ def health() -> dict[str, Any]:
         "ocr_runtime": runtime_status(),
         "ocr_device": settings.ocr_device,
         "review_mode": settings.review_mode,
+        "grading_profile": settings.grading_profile,
     }
 
 
@@ -273,6 +279,7 @@ def settings_get() -> dict[str, Any]:
         "ocr_provider": settings.ocr_provider,
         "ocr_device": settings.ocr_device,
         "local_ocr_first": settings.local_ocr_first,
+        "grading_profile": settings.grading_profile,
         "review_mode": settings.review_mode,
         "review_sample_rate": settings.review_sample_rate,
         "review_confidence_threshold": settings.review_confidence_threshold,
@@ -307,6 +314,7 @@ def settings_update(payload: LLMSettingsUpdate) -> dict[str, Any]:
         review_mode=payload.review_mode,
         review_sample_rate=payload.review_sample_rate,
         review_confidence_threshold=payload.review_confidence_threshold,
+        grading_profile=payload.grading_profile,
     )
     return settings_get()
 

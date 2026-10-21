@@ -277,6 +277,11 @@ def upsert_response(
 ) -> dict[str, Any]:
     response_id = new_id()
     with transaction() as connection:
+        connection.execute('BEGIN IMMEDIATE')
+        existing = connection.execute('SELECT * FROM responses WHERE submission_id=? AND question_id=?',
+                                      (submission_id, question_id)).fetchone()
+        if existing and existing['extraction_source'] == 'manual' and extraction_source != 'manual':
+            return row_dict(existing)
         connection.execute('UPDATE grade_items SET superseded_at=? WHERE submission_id=? AND question_id=? AND superseded_at IS NULL', (utc_now(), submission_id, question_id))
         connection.execute("UPDATE submissions SET status='extracted',finalized_at=NULL WHERE id=?", (submission_id,))
         connection.execute(

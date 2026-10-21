@@ -32,6 +32,7 @@ class Settings:
     review_mode: str = "selective"
     review_sample_rate: float = 0.05
     review_confidence_threshold: float = 0.85
+    grading_profile: str = "legacy"
 
 
 def _data_dir() -> Path:
@@ -96,6 +97,7 @@ def get_settings() -> Settings:
         review_mode=str(overrides.get("review_mode", "selective")),
         review_sample_rate=max(0.0, min(1.0, float(overrides.get("review_sample_rate", os.getenv('REVIEW_SAMPLE_RATE', '0.05'))))),
         review_confidence_threshold=float(overrides.get('review_confidence_threshold', 0.85)),
+        grading_profile=str(overrides.get('grading_profile', 'legacy')),
     )
     for directory in (settings.data_dir, settings.upload_dir, settings.page_dir, settings.crop_dir):
         directory.mkdir(parents=True, exist_ok=True)
@@ -116,6 +118,7 @@ def update_llm_settings(
     review_mode: str | None = None,
     review_sample_rate: float | None = None,
     review_confidence_threshold: float | None = None,
+    grading_profile: str | None = None,
 ) -> Settings:
     global _settings_cache
     data_dir = _data_dir()
@@ -129,7 +132,8 @@ def update_llm_settings(
     overrides["enable_thinking"] = "true" if enable_thinking else "false"
     for name, value in (("ocr_provider", ocr_provider), ("ocr_device", ocr_device),
                         ("local_ocr_first", local_ocr_first), ("review_mode", review_mode),
-                        ("review_sample_rate", review_sample_rate), ('review_confidence_threshold', review_confidence_threshold)):
+                        ("review_sample_rate", review_sample_rate), ('review_confidence_threshold', review_confidence_threshold),
+                        ('grading_profile', grading_profile)):
         if value is not None:
             overrides[name] = value
     data_dir.mkdir(parents=True, exist_ok=True)

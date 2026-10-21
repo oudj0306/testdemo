@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 import math
+from contextvars import copy_context
 
 from ..config import Settings
 from ..db import utc_now
@@ -12,22 +13,35 @@ from .math_grader import GradeDecision, grade_with_rules
 from .review_policy import apply_review_policy, confidence_threshold
 from .grading_executor import question_executor
 from .work_locks import submission_work
+from .telemetry import scope, timed, event
 
 
 RULE_MODES = {"exact_text", "choice_set", "numeric", "symbolic"}
 
 
-def grade_submission(submission_id: str, settings: Settings, pending_only: bool = False) -> dict[str, Any]:
+def grade_submission(submission_id: str, settings: Settings, pending_only: bool = False,
+                     prepared=None, expected=None, started_at=None) -> dict[str, Any]:
     with submission_work(settings.database_path, submission_id, blocking=False):
-        return _grade_submission(submission_id, settings, pending_only)
+        with scope(settings, submission_id=submission_id), timed('grading'):
+            return _grade_submission(submission_id, settings, pending_only, prepared, expected, started_at)
 
 
-def _grade_question(question, response, settings, submission_id):
+def requires_model(question, response):
+    return (question['scoring_mode'] not in RULE_MODES | {'manual'} and response
+            and str(response.get('raw_text', '')).strip()
+            and (response.get('extraction_source') == 'manual' or (
+                response.get('ocr_confidence') is not None
+                and math.isfinite(float(response['ocr_confidence']))
+                and float(response['ocr_confidence']) >= 0.5)))
+
+
+def _grade_question(question, response, settings, submission_id, prepared=None):
     # Independent questions may run together; a question's stability passes
     # remain sequential and use the original stopping/review rules.
     if question["scoring_mode"] in RULE_MODES:
         routed_question = {**question, 'rule_config': {**question.get('rule_config', {}), 'minimum_ocr_confidence': confidence_threshold(question, settings)}}
         decision = grade_with_rules(routed_question, response)
+        event('rule_grade')
     elif question["scoring_mode"] == "manual":
         decision = GradeDecision(
             None, float(question["max_score"]), ScoreState.BLOCKED, True, ["manual_scoring_required"]
@@ -48,12 +62,13 @@ def _grade_question(question, response, settings, submission_id):
     ):
         decision = GradeDecision(None, float(question['max_score']), ScoreState.BLOCKED, True, ['extraction_uncertain'])
     else:
-        decision = OpenAIGrader(settings).grade(question, str(response["raw_text"]))
+        decision = prepared if prepared is not None else OpenAIGrader(settings).grade(question, str(response["raw_text"]))
     return apply_review_policy(decision, question, response, settings, submission_id)
 
 
-def _grade_submission(submission_id: str, settings: Settings, pending_only: bool) -> dict[str, Any]:
-    started_at = utc_now()
+def _grade_submission(submission_id: str, settings: Settings, pending_only: bool,
+                      prepared=None, prior_inputs=None, started_at=None) -> dict[str, Any]:
+    started_at = started_at or utc_now()
     submission, questions, response_map = questions_for_submission(submission_id)
     output: list[dict[str, Any]] = []
     usage_total = {"input_tokens": 0, "output_tokens": 0, "cached_tokens": 0}
@@ -64,12 +79,16 @@ def _grade_submission(submission_id: str, settings: Settings, pending_only: bool
     passed = {g['question_id'] for g in existing['grade_items']
               if g.get('score') is not None or g.get('final_score') is not None} if existing else set()
     pending = [q for q in questions if q['id'] not in passed]
+    for q in pending:
+        if prior_inputs is not None and prior_inputs.get(q['id']) != (q, response_map.get(q['id'])):
+            raise ValueError('批改期间作答或评分标准已修改，请重新批改')
     if not pending and existing:
         return existing
     # The pool is shared process-wide, so two batch workers do not multiply
     # the concurrency limit. No database transaction is held while waiting.
     futures = [question_executor().submit(
-        _grade_question, q, response_map.get(q['id']), settings, submission_id,
+        copy_context().run, _grade_question, q, response_map.get(q['id']), settings, submission_id,
+        (prepared or {}).get(q['id']),
     ) for q in pending]
     failures = []
     for question, future in zip(pending, futures):

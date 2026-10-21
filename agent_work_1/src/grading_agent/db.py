@@ -191,6 +191,19 @@ CREATE TABLE IF NOT EXISTS batch_jobs (
     auto_grade INTEGER NOT NULL,
     answer_layout TEXT NOT NULL DEFAULT 'auto'
 );
+
+CREATE TABLE IF NOT EXISTS performance_events (
+    id TEXT PRIMARY KEY, batch_id TEXT, assessment_id TEXT, submission_id TEXT,
+    stage TEXT NOT NULL, elapsed_ms REAL NOT NULL, success INTEGER NOT NULL,
+    input_tokens INTEGER NOT NULL DEFAULT 0, output_tokens INTEGER NOT NULL DEFAULT 0,
+    cached_tokens INTEGER NOT NULL DEFAULT 0, details TEXT NOT NULL, created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_performance_batch ON performance_events(batch_id,stage);
+CREATE TABLE IF NOT EXISTS training_approvals (
+    id TEXT PRIMARY KEY, grade_item_id TEXT NOT NULL REFERENCES grade_items(id) ON DELETE CASCADE,
+    review_id TEXT REFERENCES review_events(id) ON DELETE CASCADE, redacted_text TEXT NOT NULL,
+    approved_by TEXT NOT NULL, created_at TEXT NOT NULL
+);
 """
 
 
@@ -218,6 +231,8 @@ def connect(path: Path | None = None) -> sqlite3.Connection:
 
 @contextmanager
 def transaction(path: Path | None = None) -> Iterator[sqlite3.Connection]:
+    from time import perf_counter
+    started = perf_counter()
     connection = connect(path)
     try:
         yield connection
@@ -227,6 +242,8 @@ def transaction(path: Path | None = None) -> Iterator[sqlite3.Connection]:
         raise
     finally:
         connection.close()
+        from .services.telemetry import database_elapsed
+        database_elapsed((perf_counter() - started) * 1000)
 
 
 def initialize_database(path: Path | None = None) -> None:

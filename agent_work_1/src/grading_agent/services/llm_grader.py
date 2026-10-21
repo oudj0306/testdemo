@@ -15,6 +15,7 @@ from .grading_cache import StableGradeCache, cache_key, review_revision
 from .llm_client import parse_json_object, response_output_text, response_usage
 from .model_transport import model_request
 from .math_grader import GradeDecision
+from .telemetry import request_json, scope
 
 
 GRADE_SCHEMA = {
@@ -58,6 +59,7 @@ class LLMResult:
     input_tokens: int = 0
     cached_input_tokens: int = 0
     output_tokens: int = 0
+    request_id: str | None = None
 
 
 class OpenAIGrader:
@@ -85,7 +87,7 @@ class OpenAIGrader:
             "model": self.settings.openai_model,
             "store": False,
             "prompt_cache_key": f"grading-{cache_key}",
-            "max_output_tokens": 4096,
+            "max_output_tokens": 1024 if self.settings.grading_profile == 'daily' and not self.settings.enable_thinking else 4096,
             "input": [
                 {
                     "role": "developer",
@@ -122,8 +124,7 @@ class OpenAIGrader:
         apply_provider_options(payload, self.settings.openai_base_url, self.settings.enable_thinking)
         request = model_request(payload, self.settings)
         try:
-            with urllib.request.urlopen(request, timeout=45) as response:
-                data = json.loads(response.read().decode("utf-8"))
+            data, request_id = request_json(request, self.settings, 'grade', 45)
         except urllib.error.HTTPError as exc:
             detail = exc.read().decode("utf-8", errors="replace")[:500]
             raise RuntimeError(f"OpenAI HTTP {exc.code}: {detail}") from exc
@@ -150,12 +151,16 @@ class OpenAIGrader:
             input_tokens=usage["input_tokens"],
             cached_input_tokens=usage["cached_tokens"],
             output_tokens=usage["output_tokens"],
+            request_id=request_id,
         )
 
     def grade(self, question: dict[str, Any], answer: str) -> GradeDecision:
         max_score = float(question["max_score"])
         if not self.available:
             return GradeDecision(None, max_score, ScoreState.BLOCKED, True, ["llm_not_configured"], grader_kind="llm")
+        if self.settings.grading_profile == 'daily':
+            from .bulk_grader import grade_daily_items
+            return grade_daily_items(question, [{'answer_id': 'single', 'answer': answer}], self.settings)['single']
         revision = review_revision(self.settings, question.get("id", ""))
         prompt_version = hashlib.sha256(json.dumps(
             [GRADING_ALGORITHM_VERSION, GRADE_INSTRUCTIONS, GRADE_SCHEMA, 4096],
@@ -189,7 +194,7 @@ class OpenAIGrader:
         usage = {"input_tokens": 0, "output_tokens": 0, "cached_tokens": 0}
         try:
             passes = self.settings.llm_grading_passes
-            if self.settings.review_mode == 'selective':
+            if self.settings.review_mode == 'selective' or self.settings.grading_profile == 'exam':
                 passes = max(2, passes)
             for _ in range(passes):
                 result = self._single_pass(question, answer)
@@ -199,7 +204,7 @@ class OpenAIGrader:
                 if not math.isfinite(result.score) or not 0 <= result.score <= max_score:
                     raise ValueError('模型分数超出范围或不是有限数，不能自动定分')
                 results.append(result)
-                if self.settings.review_mode == 'selective' and len(results) >= 2 and all(r.score == results[0].score for r in results):
+                if self.settings.grading_profile != 'exam' and self.settings.review_mode == 'selective' and len(results) >= 2 and all(r.score == results[0].score for r in results):
                     break
         except (RuntimeError, ValueError, KeyError, TypeError, OSError) as exc:
             for field, count in getattr(exc, "usage", {}).items():
@@ -235,7 +240,8 @@ class OpenAIGrader:
         total_cached = usage["cached_tokens"]
         if total_input:
             evidence.append(f"api_input_tokens={total_input};cached_input_tokens={total_cached}")
-        candidate = valid_scores[0] if stable else round(sum(valid_scores) / len(valid_scores), 2)
+        candidate = valid_scores[0] if stable else (None if self.settings.grading_profile == 'exam' else round(sum(valid_scores) / len(valid_scores), 2))
+        evidence.extend('request_id=' + r.request_id for r in results if r.request_id)
         return GradeDecision(
             candidate,
             max_score,
@@ -247,4 +253,43 @@ class OpenAIGrader:
             grader_version=self.settings.openai_model,
             usage=usage,
         ), results
+
+    def _daily(self, question, answer, attempts=2):
+        usage = {'input_tokens': 0, 'output_tokens': 0, 'cached_tokens': 0}
+        for attempt in range(attempts):
+            try:
+                with scope(self.settings, retry=bool(attempt) or attempts == 1):
+                    result = self._single_pass(question, answer)
+                for key, value in [('input_tokens', result.input_tokens), ('output_tokens', result.output_tokens), ('cached_tokens', result.cached_input_tokens)]:
+                    usage[key] += value
+                decision = daily_decision(question, answer, result.score, result.reason_codes,
+                                          result.evidence, result.needs_review, self.settings,
+                                          result.request_id)
+                decision.usage = usage
+                return decision
+            except (RuntimeError, ValueError, KeyError, TypeError, OSError) as exc:
+                for key, value in getattr(exc, 'usage', {}).items():
+                    if key in usage:
+                        usage[key] += value
+        return GradeDecision(None, float(question['max_score']), ScoreState.BLOCKED, True,
+                             ['llm_request_failed'], grader_kind='llm',
+                             grader_version=self.settings.openai_model, usage=usage)
+
+
+def daily_decision(question, answer, score, reasons, evidence, needs_review, settings, request_id=None):
+    if type(score) not in (int, float) or not math.isfinite(score) or not 0 <= score <= float(question['max_score']):
+        raise ValueError('Invalid score')
+    if type(needs_review) is not bool or not isinstance(reasons, list) or not isinstance(evidence, list):
+        raise ValueError('Invalid grading fields')
+    if not all(isinstance(s, str) and s.strip() for s in [*reasons, *evidence]):
+        raise ValueError('Invalid evidence/reasons')
+    if len(evidence) > 10 or any(len(e) > 200 or e not in answer for e in evidence):
+        raise ValueError('Evidence must quote this answer briefly')
+    codes = list(dict.fromkeys([*reasons, 'daily_single_pass']))
+    if not evidence:
+        codes.append('grading_evidence_missing')
+    return GradeDecision(float(score), float(question['max_score']), ScoreState.AUTO_SINGLE,
+                         needs_review or not evidence, codes,
+                         [*evidence, *(['request_id=' + request_id] if request_id else [])],
+                         grader_kind='llm', grader_version=settings.openai_model)
 

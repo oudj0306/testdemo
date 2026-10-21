@@ -157,10 +157,17 @@ def crop_question_regions(
         region = question.get("rule_config", {}).get("region")
         if not region:
             continue
+        from ..schemas import RegionInput
+        try:
+            region = RegionInput.model_validate(region).model_dump(exclude_none=True)
+        except ValueError:
+            continue
         page = page_map.get(int(region.get("page", 1)))
         if not page:
             continue
         with Image.open(page.path) as image:
+            if region.get('page_aspect') and abs(image.width / image.height / region['page_aspect'] - 1) > 0.1:
+                continue  # likely wrong page/camera geometry: use visual fallback
             x = int(float(region["x"]) * image.width)
             y = int(float(region["y"]) * image.height)
             width = int(float(region["width"]) * image.width)
