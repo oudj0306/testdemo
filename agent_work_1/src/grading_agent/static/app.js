@@ -332,11 +332,24 @@ function drawRegion(){
  if(regionSelection){const r=regionSelection;ctx.fillStyle='rgba(44,100,240,.15)';ctx.fillRect(r.x*canvas.width,r.y*canvas.height,r.width*canvas.width,r.height*canvas.height);ctx.strokeStyle='#245de0';ctx.lineWidth=Math.max(2,canvas.width/400);ctx.strokeRect(r.x*canvas.width,r.y*canvas.height,r.width*canvas.width,r.height*canvas.height);}
 }
 function selectSavedRegion(){
- const q=current.questions.find(q=>q.id===$('regionQuestion').value),r=q?.rule_config?.region;
+ const q=current?.questions?.find(q=>q.id===$('regionQuestion').value),r=q?.rule_config?.region;
  regionSelection=r&&r.page===regionLoadedPage?{...r}:null;drawRegion();
- $('regionStatus').textContent=regionSelection?'已载入该题区域，可重新拖动修改':'拖动鼠标框选学生实际作答区域，避免印刷题干';
+ $('regionStatus').textContent=!current?.questions?.length?'原试卷已加载。请先生成参考答案或录入题目，再为题号保存答题区域。':regionSelection?'已载入该题区域，可重新拖动修改':'拖动鼠标框选学生实际作答区域，避免印刷题干';
 }
-$('editRegions').onclick=()=>{if(!current){notice('请先选择试卷',true);return;}if(!$('regionDocument').options.length){notice('请先上传原试卷资料，支持 Word、PDF 和图片。',true);return;}if(!current.questions.length){notice('请先生成参考答案或录入题目，再为题号配置答题区域。',true);return;}regionSaved=false;regionImage=null;regionLoadedPage=null;regionSelection=null;$('regionCanvas').width=0;$('regionCrop').hidden=true;$('regionDialog').showModal();};
+function openRegionEditor(){
+ regionSaved=false;regionImage=null;regionLoadedPage=null;regionSelection=null;regionStart=null;
+ $('regionCanvas').width=0;$('regionCrop').hidden=true;
+ const canRender=!!current&&$('regionDocument').options.length>0,hasQuestions=!!current?.questions?.length;
+ const problem=!current?'请先新建或选择试卷。':!canRender?'请先在试卷资料中上传原试卷（Word、PDF 或图片）。':!hasQuestions?'可先预览原试卷；请先生成参考答案或录入题目，再为题号保存答题区域。':'';
+ for(const id of ['loadRegionPage','regionDocument','regionPage'])$(id).disabled=!canRender;
+ for(const id of ['regionQuestion','previewRegion','saveRegion','removeRegion'])$(id).disabled=!canRender||!hasQuestions;
+ $('regionStatus').textContent=problem||'在原试卷上框选学生将填写答案的空白位置。';
+ $('regionStatus').className=problem?'region-guidance':'region-guidance ready';
+ if(!$('regionDialog').open)$('regionDialog').showModal();
+ if(canRender){$('regionPage').value=String(current.questions?.find(q=>q.id===$('regionQuestion').value)?.rule_config?.region?.page||1);$('loadRegionPage').click();}
+}
+$('editRegions').onclick=openRegionEditor;
+$('regionPrepare').onclick=()=>{$('regionDialog').close();const target=!current?$('newAssessment'):!$('regionDocument').options.length?$('paperFiles'):!current.questions.length?$('generate'):$('editRegions');target.scrollIntoView({block:'center'});target.focus();};
 $('closeRegions').onclick=()=>{$('regionDialog').close();};
 $('regionDialog').addEventListener('close',()=>{if(regionPreviewUrl)URL.revokeObjectURL(regionPreviewUrl);if(regionSaved)loadAssessment().catch(e=>notice(e.message,true));});
 $('regionDocument').onchange=()=>{regionLoadedPage=null;regionSelection=null;$('regionStatus').textContent='请重新加载页面';};
@@ -351,7 +364,7 @@ action('loadRegionPage',async()=>{
 });
 const regionCanvas=$('regionCanvas');
 function regionPoint(e){const rect=regionCanvas.getBoundingClientRect();return {x:Math.max(0,Math.min(1,(e.clientX-rect.left)/rect.width)),y:Math.max(0,Math.min(1,(e.clientY-rect.top)/rect.height))};}
-regionCanvas.onpointerdown=e=>{if(!regionLoadedPage)return;regionStart=regionPoint(e);regionCanvas.setPointerCapture(e.pointerId);};
+regionCanvas.onpointerdown=e=>{if(!regionLoadedPage||!current?.questions?.length)return;regionStart=regionPoint(e);regionCanvas.setPointerCapture(e.pointerId);};
 regionCanvas.onpointermove=e=>{if(!regionStart)return;const end=regionPoint(e);regionSelection={page:regionLoadedPage,x:Math.min(end.x,regionStart.x),y:Math.min(end.y,regionStart.y),width:Math.abs(end.x-regionStart.x),height:Math.abs(end.y-regionStart.y),page_aspect:regionCanvas.width/regionCanvas.height};drawRegion();};
 regionCanvas.onpointerup=()=>{regionStart=null;};regionCanvas.onpointercancel=()=>{regionStart=null;};
 function selectedRegion(){if(!regionSelection||!regionLoadedPage||regionSelection.width<=0||regionSelection.height<=0)throw Error('请先框选有效区域');return regionSelection;}

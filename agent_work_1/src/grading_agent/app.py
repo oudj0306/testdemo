@@ -229,7 +229,7 @@ def _prepare_submission_locked(submission_id):
 
 @app.get("/", include_in_schema=False)
 def home() -> FileResponse:
-    return FileResponse(STATIC_DIR / "index.html")
+    return FileResponse(STATIC_DIR / "index.html", headers={'Cache-Control': 'no-store'})
 
 
 @app.get("/api/health")

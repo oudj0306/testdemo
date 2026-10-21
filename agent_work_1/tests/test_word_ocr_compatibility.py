@@ -127,3 +127,42 @@ def test_template_button_handles_word_and_empty_questions():
     assert "$('editRegions').disabled=false" in block
     assert '请先生成参考答案或录入题目' in text
     assert 'detail.detail' in text
+
+
+def test_region_dialog_opens_for_missing_setup_and_word_preview():
+    import shutil
+    node = shutil.which('node') or r'C:/Users/admin/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node.exe'
+    if not Path(node).exists():
+        pytest.skip('Node runtime unavailable')
+    source = Path(__file__).resolve().parents[1]/'src/grading_agent/static/app.js'
+    script = r"""
+const fs=require('fs'),vm=require('vm'),assert=require('assert');
+const text=fs.readFileSync(process.argv[1],'utf8');
+const code=text.slice(text.indexOf('function openRegionEditor(){'),text.indexOf("$('closeRegions').onclick"));
+for(const [current,documents,expected,disabled] of [
+ [null,0,'新建或选择',true],
+ [{questions:[]},0,'上传原试卷',true],
+ [{questions:[]},1,'可先预览',true],
+ [{questions:[{id:'q',rule_config:{region:{page:2}}}]},1,'空白位置',false]
+]){
+ const elements={};let loads=0;
+ const $=id=>elements[id]??=( {options:id==='regionDocument'?Array(documents):[],value:'q',open:false,
+ showModal(){this.open=true;},click(){loads++;},close(){this.open=false;},scrollIntoView(){},focus(){this.focused=true;}} );
+ const context={current,$};vm.createContext(context);vm.runInContext(code+';openRegionEditor();',context);
+ assert($('regionDialog').open);assert($('regionStatus').textContent.includes(expected));
+ assert.equal($('saveRegion').disabled,disabled);assert.equal(loads,current&&documents?1:0);
+ if(!disabled)assert.equal($('regionPage').value,'2');
+ $('regionPrepare').onclick();
+ const target=!current?'newAssessment':!documents?'paperFiles':!current.questions.length?'generate':'editRegions';
+ assert($(target).focused);
+}
+"""
+    subprocess.run([str(node), '-e', script, str(source)], check=True, capture_output=True, text=True)
+
+
+def test_home_disables_stale_html_cache():
+    from grading_agent.app import app
+    with TestClient(app) as client:
+        response = client.get('/')
+        assert response.headers['cache-control'] == 'no-store'
+        assert 'region-dialog-v3' in response.text
