@@ -1,0 +1,51 @@
+"""Deterministic exception routing, independent of model self-confidence."""
+import hashlib
+import math
+
+from ..schemas import ScoreState
+
+
+def confidence_threshold(question, settings):
+    return float(question.get('rule_config', {}).get('minimum_ocr_confidence', settings.review_confidence_threshold))
+
+
+def apply_review_policy(decision, question, response, settings, submission_id):
+    # Missing extraction is not evidence of a student's blank answer. Confirmed
+    # blanks may score zero, but still obey strict, provisional-key and OCR gates.
+    if any(r in {'answer_missing', 'blank_not_confirmed'} for r in decision.reason_codes):
+        decision.score = None
+        decision.score_state = ScoreState.BLOCKED
+        decision.needs_review = True
+    reasons = []
+    if question.get('answer_key_state') != 'verified':
+        reasons.append('provisional_answer_key')
+    if settings.review_mode == 'strict' or question.get('rule_config', {}).get('force_review'):
+        reasons.append('teacher_review_policy')
+    if response and response.get('extraction_source') != 'manual':
+        confidence = response.get('ocr_confidence')
+        minimum = confidence_threshold(question, settings)
+        if confidence is None or not math.isfinite(float(confidence)) or float(confidence) < minimum:
+            reasons.append('extraction_uncertain')
+    if decision.grader_kind == 'llm':
+        rubric = question.get('rubric', [])
+        try:
+            valid_rubric = bool(rubric) and all(str(r.get('criterion', '')).strip() and math.isfinite(float(r['score'])) and float(r['score']) >= 0 for r in rubric)
+            # Verified rubrics can contain alternative scoring paths or score caps.
+            valid_rubric = valid_rubric and sum(float(r['score']) for r in rubric) > 0
+        except (ValueError, TypeError, KeyError):
+            valid_rubric = False
+        if not valid_rubric:
+            reasons.append('rubric_incomplete')
+    # Stable across repeated grading; sampling cannot be avoided by clicking regrade.
+    sample = int.from_bytes(hashlib.sha256(f"{submission_id}:{question['id']}".encode()).digest()[:8], 'big') / 2**64
+    if not decision.needs_review and not reasons and sample < settings.review_sample_rate:
+        reasons.append('quality_spot_check')
+    if reasons:
+        decision.needs_review = True
+        decision.reason_codes = list(dict.fromkeys([*decision.reason_codes, *reasons]))
+    if not decision.needs_review and decision.grader_kind == 'llm':
+        decision.score_state = ScoreState.AUTO_STABLE
+    if question.get('answer_key_state') != 'verified' and decision.score is not None:
+        decision.score_state = ScoreState.CONSENSUS_CANDIDATE
+    decision.evidence.append(f"review_policy=v2;mode={settings.review_mode};sample_rate={settings.review_sample_rate};minimum_extraction_confidence={confidence_threshold(question, settings)}")
+    return decision

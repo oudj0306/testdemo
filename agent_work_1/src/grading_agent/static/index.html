@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#253d66"><title>阅知 · 阅卷工作台</title>
+  <link rel="stylesheet" href="/static/style.css?v=20261014-ui3">
+</head>
+<body>
+<a class="skip-link" href="#mainContent">跳到工作区</a>
+<aside class="sidebar">
+  <div class="brand"><span class="brand-symbol" aria-hidden="true">阅</span><div>阅知<small>PAPERWISE</small></div></div>
+  <p class="nav-caption">阅卷工作区</p>
+  <nav aria-label="主要导航">
+    <button data-tab="paper" class="active"><span class="nav-index">01</span><span>试卷与答案</span></button>
+    <button data-tab="upload"><span class="nav-index">02</span><span>答卷收集</span></button>
+    <button data-tab="mark"><span class="nav-index">03</span><span>智能批阅</span></button>
+    <button data-tab="review"><span class="nav-index">04</span><span>复核工作台</span><span id="reviewNavCount" class="nav-count" hidden></span></button>
+    <button data-tab="report"><span class="nav-index">05</span><span>成绩洞察</span></button>
+    <span class="nav-caption">管理与偏好</span>
+    <button data-tab="token"><span class="nav-index">↗</span><span>用量记录</span></button>
+    <button data-tab="settings"><span class="nav-index">⚙</span><span>模型与策略</span></button>
+    <button data-tab="runtime"><span class="nav-index">◇</span><span>识别加速</span><small>可选</small></button>
+  </nav>
+  <div class="sidebar-note"><span class="status-dot"></span> 保留每一次判断<p>固定标准 · 独立复核 · 可追溯</p></div>
+</aside>
+<main id="mainContent">
+  <header class="page-header"><div><p class="eyebrow" id="pageEyebrow">ASSESSMENT LIBRARY</p><h1 id="heading">试卷与答案</h1><p id="pageDescription" class="page-description">把标准准备好，让每一份答卷有据可依。</p></div><span id="health" class="badge neutral">连接中</span></header>
+  <div class="context-bar">
+    <label class="assessment-picker"><span>当前试卷</span><select id="assessment" aria-label="当前试卷"></select></label>
+    <span id="assessmentState" class="badge neutral">未选择</span><button id="newAssessment" class="secondary compact">＋ 新建试卷</button>
+    <div class="context-stats" id="contextStats" aria-live="polite"></div>
+  </div>
+  <div id="notice" role="status" aria-live="polite"></div>
+  <div id="listTools" class="list-tools" hidden><label class="search-field"><span aria-hidden="true">⌕</span><input id="studentSearch" type="search" placeholder="查找学生 / 文件名" aria-label="查找学生或文件名"></label><label class="sort-label">排列方式<select id="sortMode"><option value="time_desc">最新上传</option><option value="time_asc">最早上传</option><option value="name_asc">姓名升序</option><option value="name_desc">姓名降序</option></select></label></div>
+  <section id="paper" class="tab">
+    <div class="paper-grid">
+      <div class="card materials-card"><div class="section-title"><div><span class="section-kicker">SOURCE FILES</span><h2>试卷资料</h2></div><span class="count-label">01</span></div><p class="muted">上传原卷、已有答案或评分标准。照片、PDF、Word 都可以。</p>
+        <label class="field-label">资料类型<select id="kind"><option value="question_paper">原试卷</option><option value="answer_key">标准答案</option><option value="rubric">评分标准</option><option value="reference">参考资料</option></select></label>
+        <label class="file-zone small-zone"><span class="file-icon" aria-hidden="true">＋</span><strong>选择试卷资料</strong><span>支持多选，每个文件不超过 25 MB</span><input id="paperFiles" type="file" multiple accept=".doc,.docx,.pdf,.jpg,.jpeg,.png,.webp"><small id="paperFileHint">尚未选择文件</small></label>
+        <button id="uploadPaper" class="full-width">保存资料</button><div id="documents" class="list document-list"></div>
+        <div class="helper-note">已有标准答案可直接复用。AI 生成的答案需要先检查，再确认。</div>
+      </div>
+      <div class="card standards-card"><div class="section-title"><div><span class="section-kicker">ANSWER STANDARD</span><h2>答案与评分标准</h2></div><span class="count-label">02</span></div><div class="toolbar"><button id="generate">生成参考答案</button><button id="fillMissing" class="secondary">补全缺失项</button></div><div id="questions"></div><div class="card-footer"><button id="confirm" class="secondary">确认答案与标准</button><button id="publish">发布试卷 →</button></div></div>
+    </div>
+  </section>
+  <section id="upload" class="tab" hidden>
+    <div class="card upload-card"><div class="section-title"><div><span class="section-kicker">COLLECT FIRST, GRADE LATER</span><h2>收集学生答卷</h2></div><span class="badge">上传不消耗模型 Token</span></div>
+      <label class="file-zone" id="answerDropZone"><svg class="upload-art" viewBox="0 0 56 56" fill="none" aria-hidden="true"><rect x="13" y="6" width="30" height="42" rx="5" stroke="currentColor" stroke-width="1.5"/><path d="M21 17h14M21 23h14M28 40V30m-4 4 4-4 4 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg><strong>选择答卷，或拖放文件到这里</strong><span>照片 / PDF / Word · 一份文件对应一名学生 · 多页请合并为 PDF</span><input id="answerFiles" type="file" multiple accept=".doc,.pdf,.docx,.jpg,.jpeg,.png,.webp"><small id="answerFileHint">每个文件不超过 25 MB；同卷同内容自动去重</small></label>
+      <input id="folderFiles" type="file" webkitdirectory hidden><div class="toolbar upload-actions"><label class="sort-label">作答形式<select id="answerLayout"><option value="auto">自动判断</option><option value="answer_list">仅答案列表</option><option value="on_paper">直接写在试卷上</option></select></label><button id="batch">上传所选答卷</button><button id="uploadFolder" class="secondary">选择文件夹</button><button id="goMark" class="text-button push-right">下一步：开始批阅 →</button></div><p class="muted small">没有答题卡也可上传完整试卷；选择作答形式只影响识别，所有题仍按已确认的标准批改。</p><div id="uploadResults" aria-live="polite"></div>
+    </div>
+    <div class="card"><div class="section-title"><h2>已收集的答卷</h2><span class="muted small">原件随时可预览</span></div><div id="uploadedList" class="list"></div><div id="uploadPager" class="pagination"></div></div>
+  </section>
+  <section id="mark" class="tab" hidden>
+    <div class="action-banner"><div><span class="section-kicker">READY TO GRADE</span><h2>准备就绪，一键开始</h2><p>复用本卷标准，只处理待批答卷。已排队、已定分的内容不会重复提交。</p></div><div class="banner-actions"><button id="grade">一键批阅待批答卷 <span aria-hidden="true">→</span></button><button id="goReview" class="text-button">前往复核工作台</button></div></div>
+    <div class="card"><div class="section-title"><h2>批阅进度</h2><span id="queueState" class="badge neutral">暂无运行任务</span></div><div id="batchResults" aria-live="polite"></div><div id="gradingList" class="list"></div><div id="markPager" class="pagination"></div></div>
+  </section>
+  <section id="review" class="tab" hidden>
+    <div class="review-toolbar"><label>答卷范围<select id="reviewFilter"><option value="pending">建议复核</option><option value="reviewed">已复核，可再次调整</option><option value="all">全部已出分答卷</option></select></label><button id="bulkReviewAll" class="secondary">批量确认可确认项</button></div>
+    <div class="workbench"><div class="card review-list-card"><div class="section-title"><h2>答卷目录</h2></div><div id="submissions" class="list"></div><div id="reviewPager" class="pagination"></div></div><div class="card review-detail-card"><div class="section-title"><h2 id="studentTitle">选择一份答卷</h2><span class="badge neutral">可选人工复核</span></div><div class="review-filter-line"><label>复核方式 <select id="reviewOnly"><option value="focused">重点复核</option><option value="all">全卷复核</option></select></label><span id="reviewHint" class="muted small">重点复核只显示系统建议关注的题；全卷复核可逐题检查。</span></div><div id="submissionBody" class="empty">从左侧选择答卷。批阅完成即形成当前成绩，复核用于可选纠错。</div></div></div>
+  </section>
+  <section id="report" class="tab" hidden><div class="card"><div class="section-title"><div><span class="section-kicker">LEARNING INSIGHTS</span><h2>成绩概览</h2><p class="muted">批阅完成即统计当前成绩；复核后的最新分数自动覆盖，不额外调用模型。</p></div><div class="toolbar"><label class="sort-label">排序<select id="reportSort"><option value="score_desc">成绩从高到低</option><option value="score_asc">成绩从低到高</option><option value="name_asc">姓名升序</option><option value="name_desc">姓名降序</option></select></label><button id="refreshReport" class="secondary">刷新成绩</button><a id="downloadReport" class="button" aria-disabled="true">导出报告 ↗</a></div></div><div id="reportBody" class="empty">选择试卷后查看成绩与分析。</div></div></section>
+  <section id="token" class="tab" hidden><div class="card"><div class="section-title"><div><span class="section-kicker">MODEL USAGE</span><h2>模型用量</h2><p class="muted">按环节和答卷追踪用量。Token 数量不等于实际费用。</p></div><div class="toolbar"><label class="sort-label">排序<select id="tokenSort"><option value="token_desc">用量从高到低</option><option value="token_asc">用量从低到高</option><option value="name_asc">姓名升序</option><option value="name_desc">姓名降序</option></select></label><button id="refreshToken" class="secondary">刷新用量</button></div></div><div id="tokenBody" class="empty">批阅后会在这里显示模型返回的用量记录。</div></div></section>
+  <section id="settings" class="tab" hidden><div class="settings-layout"><div class="settings-intro"><span class="section-kicker">PREFERENCES</span><h2>让工具适合你的工作</h2><p class="muted">配置模型连接与复核策略。调整只影响后续批阅，不自动修改已有成绩。</p><div class="helper-note">更低的识别门槛会减少复核，但也可能增加漏检。建议结合自己的答卷样本调整。</div></div><div class="card settings-card"><h2>模型连接</h2><div class="settings-form">
+    <label>服务商<select id="llmProvider"><option value="custom">自定义连接</option></select></label><label id="llmPresetModelWrap">模型<select id="llmPresetModel"></select></label><label id="llmCustomModelWrap" hidden>模型名称<input id="llmModel" placeholder="填写服务商提供的模型标识" autocomplete="off"></label><label id="llmBaseUrlWrap" hidden>API 地址<input id="llmBaseUrl" type="url" placeholder="https://…/v1" autocomplete="off"></label><p id="llmProviderNote" class="muted small"></p><p class="muted small"> <a id="llmDocs" href="#" target="_blank" rel="noopener noreferrer" hidden>详细查询：官方 API 文档 ↗</a> <a id="llmKeyDocs" href="#" target="_blank" rel="noopener noreferrer" hidden>获取 API 密钥 ↗</a></p><label>API 密钥<input id="llmKey" type="password" placeholder="留空保持原密钥" autocomplete="new-password"></label><p id="settingsStatus" class="muted small"></p>
+      <div class="form-divider"><h2>评分与复核</h2></div><label>评分次数上限<select id="llmPasses"><option value="1">1 次（选择性模式仍至少 2 次）</option><option value="2">2 次</option><option value="3">3 次（稳定后提前停止）</option></select></label><label class="inline"><input id="llmExtract" type="checkbox"> 使用视觉模型抽取答卷</label><label class="inline"><input id="llmThinking" type="checkbox"> 启用思考模式<small>可能更慢、消耗更多 Token；仅对已适配此开关的平台生效，部分平台使用自身默认值</small></label><label>复核提示策略<select id="reviewMode"><option value="selective">只提示异常题与抽检题（推荐）</option><option value="strict">所有题都提示可复核</option></select></label><div class="form-row"><label>正常题抽检比例（%）<input id="sampleRate" type="number" min="0" max="100" step="1" value="5"></label><label>识别置信门槛<input id="confidenceThreshold" type="number" min="0.5" max="0.99" step="0.01" value="0.85"></label></div><p class="helper-note">模型给出数值后即形成当前成绩；复核不是出分前置条件。缺少分数的题仍需补批或人工定分。</p><div class="card-footer"><button id="saveSettings">保存模型与策略</button><button id="testLlm" class="secondary" type="button">测试当前连接</button></div><p id="llmTestResult" class="muted small">测试会发出一次简短的付费模型请求；不上传试卷。</p>
+  </div></div></div></section>
+  <section id="runtime" class="tab" hidden><div class="settings-layout"><div class="settings-intro"><span class="section-kicker">OPTIONAL ACCELERATION</span><h2>按需开启识别加速</h2><p class="muted">“本地”是运行后端的电脑或服务器，不是浏览器所在的设备。</p><div class="helper-note">仅使用远程模型时，无需 GPU，也无需自检。服务器部署后，使用服务器自己的硬件。</div></div><div class="card settings-card"><h2>识别环境</h2><div class="settings-form"><label>识别方式<select id="ocrProvider"><option value="none">仅远程视觉模型</option><option value="paddleocr">PaddleOCR（需要安装环境）</option></select></label><label>设备<select id="ocrDevice"><option value="auto">自动选择 GPU / CPU</option><option value="gpu:0">NVIDIA GPU 0</option><option value="cpu">CPU</option></select></label><label class="inline"><input id="localOcrFirst" type="checkbox"> 清晰纯文字答卷优先 OCR</label><small class="muted">公式和图形仍使用视觉模型，避免丢失信息。</small><button id="saveRuntime">保存识别设置</button><details class="optional-check"><summary>环境诊断与预热 <span class="muted small">可跳过</span></summary><p id="gpuStatus" class="muted"></p><button id="checkOcr" class="secondary">检查环境 / 预热</button><p id="ocrCheckResult" class="muted small">使用合成图片，不上传学生答卷、不调用付费模型；首次可能下载公开权重。</p></details></div></div></div></section>
+  <footer class="workspace-footer"><span>阅知 · 阅卷工作台</span><span>AI 提供建议，教师保留最终判断。</span></footer>
+</main>
+<dialog id="createDialog" class="create-dialog"><div class="section-title"><h2>新建试卷</h2><button id="closeCreate" class="icon-button" aria-label="关闭新建窗口">×</button></div><p class="muted">同一份试卷的答案和评分标准将供所有答卷复用。</p><label>试卷名称<input id="title" placeholder="例如：九年级上册 · 第一次单元测验" maxlength="200"></label><div class="card-footer"><button id="create">创建试卷 →</button></div></dialog>
+<dialog id="preview" class="preview-dialog"><div class="section-title"><h2>答卷与资料预览</h2><button id="closePreview" class="secondary">关闭预览</button></div><iframe id="previewFrame" title="文件预览"></iframe></dialog>
+<script src="/static/chart.umd.min.js"></script><script src="/static/app.js?v=20261015-export-removed"></script>
+</body></html>

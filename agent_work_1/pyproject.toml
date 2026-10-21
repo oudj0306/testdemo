@@ -1,0 +1,46 @@
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "math-grading-agent"
+version = "0.1.0"
+description = "Auditable math homework and exam grading MVP"
+requires-python = ">=3.11"
+dependencies = [
+  "fastapi>=0.115,<1",
+  "uvicorn>=0.34,<1",
+  "python-multipart>=0.0.20,<1",
+  "pydantic>=2.10,<3",
+  "sympy>=1.13,<2",
+  "Pillow>=11,<13",
+  "pypdfium2>=4.30,<6",
+  "python-docx>=1.2,<2",
+  "olefile>=0.47,<1",
+]
+
+[project.optional-dependencies]
+dev = [
+  "httpx>=0.28,<1",
+  "pytest>=8.3,<10",
+]
+ocr = [
+  "paddleocr>=3.7,<4",
+  "paddlepaddle>=3.3,<4",
+]
+
+[project.scripts]
+grading-agent = "grading_agent.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+grading_agent = ["static/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+cache_dir = "tests/artifacts/cache/pytest"
+norecursedirs = ["artifacts", ".venv", ".venv-gpu", ".venv-ocr"]
+
