@@ -103,7 +103,8 @@ def _save_image_page(image: Image.Image, destination: Path, page_no: int) -> Nor
 
 
 @serialized_document_io
-def ingest_document(content: bytes, declared_media_type: str | None, settings: Settings, render_pages: bool = True) -> IngestedDocument:
+def ingest_document(content: bytes, declared_media_type: str | None, settings: Settings, render_pages: bool = True,
+                    render_word_pages: bool = False) -> IngestedDocument:
     media_type = sniff_media_type(content, declared_media_type)
     source_hash = hashlib.sha256(content).hexdigest()
     source_path = settings.upload_dir / f"{source_hash}{ALLOWED_MEDIA[media_type]}"
@@ -140,6 +141,15 @@ def ingest_document(content: bytes, declared_media_type: str | None, settings: S
                 pages.append(_save_image_page(image, destination, 1))
         except Exception as exc:
             raise ValueError("图片无法解码") from exc
+    elif media_type in {'application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'} and render_pages and render_word_pages:
+        from .document_renderer import word_to_pdf
+        try:
+            pdf_path = word_to_pdf(source_path, settings.data_dir)
+            rendered = ingest_document(pdf_path.read_bytes(), 'application/pdf', settings, render_pages=True)
+            pages, page_count = rendered.pages, rendered.source_page_count
+        except ValueError:
+            # Word text extraction remains usable without an installed renderer.
+            pages = []
     else:
         # DOCX is retained as-is; text and embedded media are extracted separately.
         pages = []

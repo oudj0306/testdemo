@@ -16,6 +16,7 @@ from .repository import get_assessment, row_dict
 from .schemas import RegionInput, TrainingApproval
 from .services.ingestion import serialized_document_io
 from .services.telemetry import summary
+from .services.document_renderer import WORD_MEDIA, renderer_status, word_to_pdf
 
 router = APIRouter()
 
@@ -30,7 +31,12 @@ def page_image(assessment_id, document_id, page):
     path = Path(row['source_path']).resolve()
     if not path.is_relative_to(get_settings().data_dir.resolve()) or not path.is_file():
         raise HTTPException(404, '资料不可访问')
-    if row['media_type'] == 'application/pdf':
+    if row['media_type'] in WORD_MEDIA:
+        try:
+            path = word_to_pdf(path, get_settings().data_dir)
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+    if row['media_type'] == 'application/pdf' or row['media_type'] in WORD_MEDIA:
         with pdfium.PdfDocument(path) as pdf:
             if not 1 <= page <= len(pdf):
                 raise HTTPException(400, '页码不存在')
@@ -45,6 +51,12 @@ def page_image(assessment_id, document_id, page):
         with Image.open(path) as image:
             return ImageOps.exif_transpose(image).convert('RGB')
     raise HTTPException(400, '模板预览支持图片和 PDF；请检查页码')
+
+
+@router.get('/api/runtime/document-renderer')
+def document_renderer_status():
+    status = renderer_status()
+    return {key: value for key, value in status.items() if key != 'executable'}
 
 
 def png(image):

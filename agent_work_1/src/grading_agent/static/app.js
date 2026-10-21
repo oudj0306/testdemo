@@ -293,7 +293,7 @@ async function renderTokenUsage(){
  renderPager('tokenPager','token',tsubs.length);
 }
 action('refreshToken',renderTokenUsage);
-async function refreshHealth(){const h=await api('/api/health');$('health').textContent=h.llm_configured?'模型已配置':'模型待配置';const r=h.ocr_runtime;$('gpuStatus').textContent=!r.paddle_installed||!r.paddleocr_installed?'当前后端未装齐 OCR；不影响仅远程模型方式。':r.active_device?'最近实际识别设备：'+r.active_device:'后端 OCR 包已安装，可选择检查设备，也可以跳过。';if(Object.keys(r.errors).length)$('gpuStatus').textContent+=' 错误：'+Object.values(r.errors).join('；')+'（排除故障后重启服务）';if(r.compatibility_warning)$('gpuStatus').textContent+=' '+r.compatibility_warning;}
+async function refreshHealth(){const h=await api('/api/health');$('health').textContent=h.llm_configured?'模型已配置':'模型待配置';const r=h.ocr_runtime;$('gpuStatus').textContent=!r.paddle_installed||!r.paddleocr_installed?'当前服务使用的 Python 未装齐 OCR。请关闭服务，用 start-optimization.ps1 重新启动；它会优先选择原有 OCR 环境。':r.active_device?'最近实际识别设备：'+r.active_device:'后端 OCR 包已安装，可选择检查设备，也可以跳过。';$('gpuStatus').textContent+=' 当前服务环境：'+(r.python_executable||'未知')+'；OCR 选项：'+(h.ocr_provider==='paddleocr'?'已启用':'未启用')+'。';if(Object.keys(r.errors).length)$('gpuStatus').textContent+=' 错误：'+Object.values(r.errors).join('；')+'（排除故障后重启服务）';if(r.compatibility_warning)$('gpuStatus').textContent+=' '+r.compatibility_warning;}
 let modelProviders=[], savedConnection=null, customConnectionDraft={model:'',base_url:''}, displayedProvider='custom';
 function selectedModelConnection(){const id=$('llmProvider').value,p=modelProviders.find(x=>x.id===id);return {provider:id,model:p?$('llmPresetModel').value:$('llmModel').value.trim(),base_url:p?p.base_url:$('llmBaseUrl').value.trim()};}
 function renderModelProvider(keepModel){const id=$('llmProvider').value,p=modelProviders.find(x=>x.id===id),custom=!p;
@@ -321,10 +321,10 @@ function wrapTables(container){container.querySelectorAll('table').forEach(table
 // Region coordinates always refer to the source page, independent of CSS scaling.
 let regionImage=null, regionSelection=null, regionStart=null, regionDocumentId=null, regionLoadedPage=null, regionPreviewUrl=null, regionSaved=false;
 function setupRegionEditor(docs){
- const supported=docs.filter(d=>d.kind==='question_paper'&&(d.media_type==='application/pdf'||d.media_type.startsWith('image/')));
+ const supported=docs.filter(d=>d.kind==='question_paper'&&(d.media_type==='application/pdf'||d.media_type.startsWith('image/')||d.media_type==='application/msword'||d.media_type==='application/vnd.openxmlformats-officedocument.wordprocessingml.document'));
  $('regionDocument').innerHTML=supported.map((d,i)=>'<option value="'+esc(d.id)+'">原试卷 · 第 '+(i+1)+' 份资料</option>').join('');
  $('regionQuestion').innerHTML=current.questions.map(q=>'<option value="'+esc(q.id)+'">第 '+esc(q.question_no)+' 题'+(q.rule_config?.region?' · 已配置':'')+'</option>').join('');
- $('editRegions').disabled=!supported.length||!current.questions.length;
+ $('editRegions').disabled=false;$('editRegions').title=!supported.length?'请先上传原试卷':!current.questions.length?'请先生成或录入题目':'支持图片、PDF 和 Word 原卷';
 }
 function drawRegion(){
  const canvas=$('regionCanvas'),ctx=canvas.getContext('2d');if(!regionImage)return;
@@ -336,16 +336,16 @@ function selectSavedRegion(){
  regionSelection=r&&r.page===regionLoadedPage?{...r}:null;drawRegion();
  $('regionStatus').textContent=regionSelection?'已载入该题区域，可重新拖动修改':'拖动鼠标框选学生实际作答区域，避免印刷题干';
 }
-$('editRegions').onclick=()=>{regionSaved=false;regionImage=null;regionLoadedPage=null;regionSelection=null;$('regionCanvas').width=0;$('regionCrop').hidden=true;$('regionDialog').showModal();};
+$('editRegions').onclick=()=>{if(!current){notice('请先选择试卷',true);return;}if(!$('regionDocument').options.length){notice('请先上传原试卷资料，支持 Word、PDF 和图片。',true);return;}if(!current.questions.length){notice('请先生成参考答案或录入题目，再为题号配置答题区域。',true);return;}regionSaved=false;regionImage=null;regionLoadedPage=null;regionSelection=null;$('regionCanvas').width=0;$('regionCrop').hidden=true;$('regionDialog').showModal();};
 $('closeRegions').onclick=()=>{$('regionDialog').close();};
 $('regionDialog').addEventListener('close',()=>{if(regionPreviewUrl)URL.revokeObjectURL(regionPreviewUrl);if(regionSaved)loadAssessment().catch(e=>notice(e.message,true));});
 $('regionDocument').onchange=()=>{regionLoadedPage=null;regionSelection=null;$('regionStatus').textContent='请重新加载页面';};
 $('regionPage').oninput=()=>{regionLoadedPage=null;regionSelection=null;$('regionStatus').textContent='请重新加载页面';};
 $('regionQuestion').onchange=selectSavedRegion;
 action('loadRegionPage',async()=>{
- const doc=$('regionDocument').value,page=Number($('regionPage').value);if(!Number.isInteger(page)||page<1)throw Error('请输入有效页码');
+ const doc=$('regionDocument').value,page=Number($('regionPage').value);if(!Number.isInteger(page)||page<1)throw Error('请输入有效页码');$('regionStatus').textContent='正在加载页面；Word 原卷首次需要本机转换为 PDF，请稍候。';
  const response=await fetch('/api/assessments/'+aid()+'/template-page?document_id='+encodeURIComponent(doc)+'&page='+page);
- if(!response.ok)throw Error('页面加载失败，请检查页码和资料类型');
+ if(!response.ok){const detail=await response.json().catch(()=>({}));const message=detail.detail||'页面加载失败，请检查页码和资料类型';$('regionStatus').textContent=message;throw Error(message);}
  const url=URL.createObjectURL(await response.blob());
  try{const image=new Image();image.src=url;await image.decode();regionImage=image;regionDocumentId=doc;regionLoadedPage=page;$('regionCanvas').width=image.naturalWidth;$('regionCanvas').height=image.naturalHeight;selectSavedRegion();}finally{URL.revokeObjectURL(url);}
 });

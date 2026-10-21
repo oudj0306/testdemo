@@ -2,6 +2,7 @@
 import importlib.util
 import json
 import os
+import sys
 from pathlib import Path
 from threading import RLock
 
@@ -15,6 +16,8 @@ _compatibility_warning = None
 
 def runtime_status():
     return {
+        'python_executable': sys.executable,
+        'model_cache': os.environ.get('PADDLE_PDX_CACHE_HOME'),
         'paddle_installed': importlib.util.find_spec('paddle') is not None,
         'paddleocr_installed': importlib.util.find_spec('paddleocr') is not None,
         'active_device': _active_device,
@@ -32,9 +35,10 @@ def recognize(path, device='auto', retry_initialization=False):
             if device in _initialization_errors:
                 return '', None, 'paddleocr_failed'
             if device not in _engines:
-                root = Path(__file__).resolve().parents[3]
-                os.environ.setdefault('PADDLE_PDX_CACHE_HOME', str(root / '.cache' / 'paddlex'))
-                os.environ.setdefault('HF_HOME', str(root / '.cache' / 'huggingface'))
+                from .runtime_paths import model_cache_root
+                cache = model_cache_root()
+                os.environ.setdefault('PADDLE_PDX_CACHE_HOME', str(cache / 'paddlex'))
+                os.environ.setdefault('HF_HOME', str(cache / 'huggingface'))
                 import paddle
                 from paddleocr import PaddleOCR
                 gpu_available = paddle.is_compiled_with_cuda() and paddle.device.cuda.device_count() > 0

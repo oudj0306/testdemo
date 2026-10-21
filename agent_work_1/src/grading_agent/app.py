@@ -108,7 +108,8 @@ def persist_submission(
     local_first = (answer_layout == 'answer_list' and settings.local_ocr_first
                    and settings.ocr_provider == 'paddleocr'
                    and all(q['question_type'] in text_types for q in assessment['questions']))
-    document = ingest_document(content, content_type, settings, render_pages=has_regions or local_first)
+    document = ingest_document(content, content_type, settings, render_pages=has_regions or local_first,
+                               render_word_pages=has_regions)
     pages = [
         {
             "page_no": page.page_no,

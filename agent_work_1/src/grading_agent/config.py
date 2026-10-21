@@ -75,6 +75,8 @@ def get_settings() -> Settings:
         return _settings_cache
     data_dir = _data_dir()
     overrides = _read_overrides()
+    from .services.runtime_paths import inherited_ocr_defaults
+    inherited = inherited_ocr_defaults(PROJECT_ROOT) if data_dir == (PROJECT_ROOT / 'data').resolve() else {}
     if "openai_api_key" in overrides:
         openai_api_key = overrides["openai_api_key"] or None
     else:
@@ -91,9 +93,9 @@ def get_settings() -> Settings:
         llm_grading_passes=_clamp_passes(overrides.get("llm_grading_passes", os.getenv("LLM_GRADING_PASSES", "1"))),
         llm_extract_answers=_as_bool(overrides.get("llm_extract_answers", os.getenv("LLM_EXTRACT_ANSWERS", "true"))),
         enable_thinking=_as_bool(overrides.get("enable_thinking", os.getenv("LLM_ENABLE_THINKING", "false"))),
-        ocr_provider=str(overrides.get("ocr_provider", os.getenv("OCR_PROVIDER", "none"))).lower(),
-        ocr_device=str(overrides.get("ocr_device", os.getenv("OCR_DEVICE", "auto"))),
-        local_ocr_first=_as_bool(overrides.get("local_ocr_first", False)),
+        ocr_provider=str(overrides.get("ocr_provider", os.getenv("OCR_PROVIDER", inherited.get('ocr_provider', 'none')))).lower(),
+        ocr_device=str(overrides.get("ocr_device", os.getenv("OCR_DEVICE", inherited.get('ocr_device', 'auto')))),
+        local_ocr_first=_as_bool(overrides.get("local_ocr_first", inherited.get('local_ocr_first', False))),
         review_mode=str(overrides.get("review_mode", "selective")),
         review_sample_rate=max(0.0, min(1.0, float(overrides.get("review_sample_rate", os.getenv('REVIEW_SAMPLE_RATE', '0.05'))))),
         review_confidence_threshold=float(overrides.get('review_confidence_threshold', 0.85)),
