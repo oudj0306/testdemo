@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="theme-color" content="#253d66"><title>阅知 · 阅卷工作台</title>
-  <link rel="stylesheet" href="/static/style.css?v=20261021-region5">
+  <link rel="stylesheet" href="/static/style.css?v=20261021-layout6">
 </head>
 <body>
 <a class="skip-link" href="#mainContent">跳到工作区</a>
@@ -33,6 +33,14 @@
   <div id="notice" role="status" aria-live="polite"></div>
   <div id="listTools" class="list-tools" hidden><label class="search-field"><span aria-hidden="true">⌕</span><input id="studentSearch" type="search" placeholder="查找学生 / 文件名" aria-label="查找学生或文件名"></label><label class="sort-label">排列方式<select id="sortMode"><option value="time_desc">最新上传</option><option value="time_asc">最早上传</option><option value="name_asc">姓名升序</option><option value="name_desc">姓名降序</option></select></label></div>
   <section id="paper" class="tab">
+    <div class="card local-layout-card">
+      <div class="section-title"><div><span class="section-kicker">SET UP ONCE · READ LOCALLY</span><h2>自动位置模板</h2></div><span id="layoutBadge" class="badge neutral">尚未配置</span></div>
+      <p class="muted">大模型仅解析一次原卷或空白答题卡，生成大题、小题、作答区及填涂位置。后续同版学生答卷在本地对齐、识别，再按规则或评分细则出分。</p>
+      <div class="toolbar"><label>模板来源<select id="layoutDocument"></select></label><button id="generateLayout">生成并启用本地模板</button><button id="previewLayout" class="secondary" disabled>预览自动区域</button><button id="toggleLayout" class="secondary" disabled>停用本地模板</button></div>
+      <label class="inline small"><input id="forceLayout" type="checkbox">重新请求模型生成（替换已有模板，会产生用量；不勾选则复用有效模板）</label>
+      <p id="layoutState" class="helper-note" role="status" aria-live="polite">先生成或录入题目，再配置模板。使用独立答题卡时，请把空白答题卡按“原试卷”类型上传并选作模板来源。</p>
+      <div id="layoutQuestions" class="layout-question-groups"></div>
+    </div>
     <div class="paper-grid">
       <div class="card materials-card"><div class="section-title"><div><span class="section-kicker">SOURCE FILES</span><h2>试卷资料</h2></div><span class="count-label">01</span></div><p class="muted">上传原卷、已有答案或评分标准。照片、PDF、Word 都可以。</p>
         <label class="field-label">资料类型<select id="kind"><option value="question_paper">原试卷</option><option value="answer_key">标准答案</option><option value="rubric">评分标准</option><option value="reference">参考资料</option></select></label>
@@ -46,7 +54,7 @@
   <section id="upload" class="tab" hidden>
     <div class="card upload-card"><div class="section-title"><div><span class="section-kicker">COLLECT FIRST, GRADE LATER</span><h2>收集学生答卷</h2></div><span class="badge">上传不消耗模型 Token</span></div>
       <label class="file-zone" id="answerDropZone"><svg class="upload-art" viewBox="0 0 56 56" fill="none" aria-hidden="true"><rect x="13" y="6" width="30" height="42" rx="5" stroke="currentColor" stroke-width="1.5"/><path d="M21 17h14M21 23h14M28 40V30m-4 4 4-4 4 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg><strong>选择答卷，或拖放文件到这里</strong><span>照片 / PDF / Word · 一份文件对应一名学生 · 多页请合并为 PDF</span><input id="answerFiles" type="file" multiple accept=".doc,.pdf,.docx,.jpg,.jpeg,.png,.webp"><small id="answerFileHint">每个文件不超过 25 MB；同卷同内容自动去重</small></label>
-      <input id="folderFiles" type="file" webkitdirectory hidden><div class="toolbar upload-actions"><label class="sort-label">作答形式<select id="answerLayout"><option value="auto">自动判断</option><option value="answer_list">仅答案列表</option><option value="on_paper">直接写在试卷上</option></select></label><button id="batch">上传所选答卷</button><button id="uploadFolder" class="secondary">选择文件夹</button><button id="goMark" class="text-button push-right">下一步：开始批阅 →</button></div><p class="muted small">选择题无需框选：上传答卷后自动识别选项，按标准答案规则判分。自动识别需配置视觉模型并消耗识别用量。没有答题卡也可上传完整试卷。</p><div id="uploadResults" aria-live="polite"></div>
+      <input id="folderFiles" type="file" webkitdirectory hidden><div class="toolbar upload-actions"><label class="sort-label">作答形式<select id="answerLayout"><option value="auto">自动判断</option><option value="answer_list">仅答案列表</option><option value="on_paper">直接写在试卷上</option></select></label><button id="batch">上传所选答卷</button><button id="uploadFolder" class="secondary">选择文件夹</button><button id="goMark" class="text-button push-right">下一步：开始批阅 →</button></div><p class="muted small">启用自动模板后：同版答卷本地对齐、填涂检测和 OCR，不调用视觉识别 API；需要理解语义或步骤的评分仍使用模型。未启用模板时保留原识别流程。</p><div id="uploadResults" aria-live="polite"></div>
     </div>
     <div class="card"><div class="section-title"><h2>已收集的答卷</h2><span class="muted small">原件随时可预览</span></div><div id="uploadedList" class="list"></div><div id="uploadPager" class="pagination"></div></div>
   </section>
@@ -71,7 +79,7 @@
 <dialog id="preview" class="preview-dialog"><div class="section-title"><h2>答卷与资料预览</h2><button id="closePreview" class="secondary">关闭预览</button></div><iframe id="previewFrame" title="文件预览"></iframe></dialog>
 <dialog id="regionDialog" class="optimization-dialog region-editor">
   <header class="region-header"><div><span class="region-eyebrow">ANSWER REGIONS</span><h2>作答区域工作台</h2><p>先框选，再选择题号保存。同版答卷复用一次配置。</p></div><button id="closeRegions" class="secondary">关闭</button></header>
-  <div class="region-auto-note"><strong>选择题 · 自动识别，无需框选</strong><span>上传答卷后，由已配置的视觉模型定位题号与填涂选项，再按评分规则判分；识别会消耗模型用量。</span></div>
+  <div class="region-auto-note"><strong>选择题 · 自动识别，无需框选</strong><span>先生成自动位置模板，再由本地填涂检测或 OCR 读取答案；此处只用于纠正非选择题的位置。</span></div>
   <div class="region-controls"><label>原卷资料<select id="regionDocument"></select></label><label class="region-page-field">页码<input id="regionPage" type="number" min="1" value="1"></label><label>查看已存区域<select id="regionQuestion"></select></label><label>框选方式<select id="regionMode"><option value="drag">按住鼠标拖动</option><option value="corners">两点框选</option></select></label><button id="loadRegionPage">加载页面</button></div>
   <p class="region-guidance">仅为需要局部 OCR 的非选择题设置区域。在原试卷或空白答题卡上，框住学生实际填写答案的位置。</p>
   <p id="regionStatus" role="status" aria-live="polite"></p>
@@ -87,6 +95,7 @@
     <div class="region-card-actions"><button id="previewRegion" class="secondary">预览裁切</button><button id="saveRegion">保存区域</button></div>
   </section>
 </dialog>
+<dialog id="layoutPreviewDialog" class="optimization-dialog"><div class="toolbar"><h2>自动模板 · 位置核对</h2><button id="closeLayoutPreview" class="secondary">关闭</button></div><p>蓝框：文字作答区域；绿框：选择题填涂区域及选项。首次请核对题号与实际位置，错误的文字区域可用框选纠正。</p><div class="toolbar"><label>模板页码<input id="layoutPreviewPage" type="number" min="1" value="1"></label><button id="loadLayoutPreview">查看该页</button></div><p id="layoutPreviewStatus" role="status"></p><img id="layoutPreviewImage" alt="自动模板区域标注预览" style="width:100%"></dialog>
 <dialog id="trainingDialog" class="optimization-dialog"><h2>批准训练样本</h2><p>请删除姓名和联系方式等身份信息。批准脱敏文本不代表确认机器评分；必须先保存人工复核，才能导出教师确认标签。</p><label>脱敏作答<textarea id="trainingText" rows="8"></textarea></label><label>批准人<input id="trainingApprover" maxlength="100"></label><label class="inline"><input id="trainingConsent" type="checkbox">我已检查脱敏文本，并批准用于训练数据导出</label><div class="toolbar"><button id="approveTraining">批准</button><button id="closeTraining" class="secondary">取消</button></div></dialog>
-<script src="/static/chart.umd.min.js"></script><script src="/static/app.js?v=20261021-region-save-v5"></script>
+<script src="/static/chart.umd.min.js"></script><script src="/static/app.js?v=20261021-local-layout-v6"></script>
 </body></html>

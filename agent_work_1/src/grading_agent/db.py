@@ -199,6 +199,12 @@ CREATE TABLE IF NOT EXISTS performance_events (
     cached_tokens INTEGER NOT NULL DEFAULT 0, details TEXT NOT NULL, created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_performance_batch ON performance_events(batch_id,stage);
+CREATE TABLE IF NOT EXISTS assessment_layouts (
+    assessment_id TEXT PRIMARY KEY REFERENCES assessments(id) ON DELETE CASCADE,
+    document_id TEXT NOT NULL REFERENCES assessment_documents(id) ON DELETE CASCADE,
+    source_hash TEXT NOT NULL, question_fingerprint TEXT NOT NULL, version TEXT NOT NULL,
+    payload TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS training_approvals (
     id TEXT PRIMARY KEY, grade_item_id TEXT NOT NULL REFERENCES grade_items(id) ON DELETE CASCADE,
     review_id TEXT REFERENCES review_events(id) ON DELETE CASCADE, redacted_text TEXT NOT NULL,

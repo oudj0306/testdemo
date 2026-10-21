@@ -7,6 +7,7 @@ from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import Response
+from pydantic import BaseModel, Field
 from PIL import Image, ImageOps
 import pypdfium2 as pdfium
 
@@ -19,6 +20,99 @@ from .services.telemetry import summary
 from .services.document_renderer import WORD_MEDIA, renderer_status, word_to_pdf
 
 router = APIRouter()
+
+
+class LayoutGenerate(BaseModel):
+    document_id: str = Field(min_length=1)
+    force: bool = False
+
+
+class LayoutSwitch(BaseModel):
+    enabled: bool
+
+
+@router.get('/api/assessments/{assessment_id}/layout-template')
+def get_layout_template(assessment_id: str):
+    from .services.layout_templates import layout_status
+    from .services.local_answers import dependencies
+    assessment = get_assessment(assessment_id)
+    if not assessment:
+        raise HTTPException(404, '试卷不存在')
+    return {**layout_status(assessment), 'local_dependencies': dependencies()}
+
+
+@router.post('/api/assessments/{assessment_id}/layout-template')
+def create_layout_template(assessment_id: str, payload: LayoutGenerate):
+    from .services.layout_templates import generate_layout
+    assessment = get_assessment(assessment_id)
+    if not assessment:
+        raise HTTPException(404, '试卷不存在')
+    with transaction() as db:
+        row = db.execute('SELECT * FROM assessment_documents WHERE assessment_id=? AND id=? AND kind=\'question_paper\'',
+                         (assessment_id,payload.document_id)).fetchone()
+    if not row:
+        raise HTTPException(404, '请选择本试卷的原卷或作为原卷上传的空白答题卡')
+    try:
+        return generate_layout(assessment,dict(row),get_settings(),payload.force)
+    except ValueError as exc:
+        raise HTTPException(422,str(exc)) from exc
+    except Exception as exc:
+        import logging
+        logging.getLogger(__name__).exception('Template generation failed')
+        raise HTTPException(502,'模板模型调用失败，请检查连接；未自动重试，原模板保持可用') from exc
+
+
+@router.put('/api/assessments/{assessment_id}/layout-template')
+def switch_layout_template(assessment_id: str, payload: LayoutSwitch):
+    from .services.layout_templates import layout_status
+    assessment = get_assessment(assessment_id)
+    if not assessment:
+        raise HTTPException(404, '试卷不存在')
+    state = layout_status(assessment)
+    if not state['exists']:
+        raise HTTPException(404, '尚无模板')
+    if payload.enabled and state['stale']:
+        raise HTTPException(409, '题目或来源已变更，请重新生成模板')
+    with transaction() as db:
+        db.execute('UPDATE assessment_layouts SET enabled=? WHERE assessment_id=?',(int(payload.enabled),assessment_id))
+    return layout_status(assessment)
+
+
+@router.get('/api/assessments/{assessment_id}/layout-template/page')
+def layout_overlay(assessment_id: str, page: int = Query(1,ge=1)):
+    from PIL import ImageDraw, ImageFont
+    from .services.layout_templates import layout_status
+    assessment = get_assessment(assessment_id)
+    if not assessment:
+        raise HTTPException(404,'试卷不存在')
+    state = layout_status(assessment)
+    if not state['exists']:
+        raise HTTPException(404,'尚无模板')
+    with transaction() as db:
+        row = db.execute('SELECT payload FROM assessment_layouts WHERE assessment_id=?',(assessment_id,)).fetchone()
+    payload = decode_json(row['payload'],{})
+    spec = next((p for p in payload['pages'] if p['page']==page),None)
+    if not spec:
+        raise HTTPException(404,'模板无此页')
+    path = Path(spec['path']).resolve()
+    if not path.is_relative_to(get_settings().data_dir.resolve()) or not path.is_file():
+        raise HTTPException(404,'模板页面不可访问')
+    numbers = {q['id']:q['question_no'] for q in assessment['questions']}
+    with Image.open(path) as raw:
+        image=raw.convert('RGB')
+    draw=ImageDraw.Draw(image)
+    font=ImageFont.load_default()
+    for font_path in ('C:/Windows/Fonts/msyh.ttc','/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc'):
+        if Path(font_path).is_file():
+            font=ImageFont.truetype(font_path,18)
+            break
+    for item in payload['items']:
+        for b in item['regions'] + [o['box'] for o in item['options']]:
+            if b['page']==page:
+                xy=(int(b['x']*image.width),int(b['y']*image.height),int((b['x']+b['width'])*image.width),int((b['y']+b['height'])*image.height))
+                draw.rectangle(xy,outline='#20a879' if item['method']=='omr' else '#416ce5',width=3)
+                draw.text((xy[0]+3,xy[1]+3),numbers.get(item['question_id'],'?'),fill='#173d80',font=font)
+    return png(image)
 
 
 @serialized_document_io

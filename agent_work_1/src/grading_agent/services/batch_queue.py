@@ -132,7 +132,7 @@ class BatchQueue:
                                           None, job['answer_layout'])
             with transaction() as connection:
                 connection.execute("UPDATE grading_batch_items SET submission_id=? WHERE id=?", (submission['id'], job['id']))
-        if submission.get('extraction_warning'):
+        if submission.get('extraction_warning') and submission.get('normalization_report', {}).get('local_recognition', {}).get('mode') != 'local_only':
             raise ValueError("识别失败；可打开答卷校对后重批：" + submission['extraction_warning'])
         if job['auto_grade']:
             with transaction() as connection:

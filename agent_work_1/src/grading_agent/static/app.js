@@ -12,7 +12,7 @@ function currentSubmissionScore(submission){
  const scores=grades.map(g=>g.effective_score??g.final_score??g.score).filter(value=>value!==null&&value!==undefined&&value!==''&&Number.isFinite(Number(value)));
  return scores.length?scores.reduce((total,value)=>total+Number(value),0):null;
 }
-let current = null, selected = null;
+let current = null, selected = null, activeLayout = null;
 let submissionRows = [], activeJobs = new Map(), pendingFiles = [], currentTab = 'paper', openRequest = 0;
 let submissionHistory = [];
 let assessmentRequest = 0;
@@ -67,12 +67,13 @@ async function loadAssessment(){
  const request=++assessmentRequest,id=$('assessment').value;openRequest++;rerenderCurrentQuestion=null;submissionRows=[];activeJobs.clear();$('studentSearch').value='';Object.values(pageState).forEach(s=>s.page=1);$('contextStats').innerHTML='';$('downloadReport').setAttribute('aria-disabled','true');
  viewedSubmission=null;
  clearTimeout(batchTimer);
- selected=null;current=null;pg('review').page=1;$('submissionBody').textContent='选择答卷查看详情。';$('studentTitle').textContent='选择一份答卷';$('reportBody').textContent='点击生成报告以读取最新成绩。';$('downloadReport').removeAttribute('href');
+ selected=null;current=null;activeLayout=null;pg('review').page=1;$('submissionBody').textContent='选择答卷查看详情。';$('studentTitle').textContent='选择一份答卷';$('reportBody').textContent='点击生成报告以读取最新成绩。';$('downloadReport').removeAttribute('href');
  if(!$('assessment').value)return;
  const [a,docs]=await Promise.all([api('/api/assessments/'+id),api('/api/assessments/'+id+'/documents')]);if(request!==assessmentRequest||$('assessment').value!==id)return;current=a;$('assessmentState').textContent=a.status==='published'?'已发布':'草稿';$('assessmentState').className='badge '+(a.status==='published'?'':'neutral');
  $('documents').innerHTML=docs.length?docs.map(d=>'<button data-doc="'+d.id+'">'+esc(({question_paper:'原试卷',answer_key:'答案册',rubric:'评分标准',reference:'参考资料'})[d.kind])+' · '+esc(d.media_type.includes('word')?'Word':d.media_type.split('/')[1])+'　查看原件</button>').join(''):'<p class="muted">还没有资料，请上传原试卷。</p>';
  document.querySelectorAll('[data-doc]').forEach(b=>b.onclick=()=>showPreview('document',b.dataset.doc));
- $('questions').innerHTML=a.questions.length?a.questions.map(q=>'<details class="question" open><summary>第 '+esc(q.question_no)+' 题 · '+q.max_score+' 分 <span class="badge">'+(q.answer_key_state==='candidate'?'待确认':'已确认')+'</span></summary><p>'+esc(q.prompt)+'</p><h3>参考答案</h3><pre>'+esc(typeof q.answer_key==='string'?q.answer_key:JSON.stringify(q.answer_key))+'</pre><h3>评分细则</h3>'+q.rubric.map(r=>'<p>'+esc(r.criterion)+' <b>'+esc(r.score)+' 分</b></p>').join('')+(q.rubric.length?'':'<p class="muted">根据标准答案及题目规则评分。</p>')+'</details>').join(''):'<p class="empty">上传试卷后，点击 AI 生成答案。</p>';
+ await loadLayoutStatus(docs);
+ $('questions').innerHTML=a.questions.length?a.questions.map(q=>'<details class="question" open><summary>'+esc(layoutQuestionLabel(q))+' · '+q.max_score+' 分 <span class="badge">'+(q.answer_key_state==='candidate'?'待确认':'已确认')+'</span></summary><p>'+esc(q.prompt)+'</p><h3>参考答案</h3><pre>'+esc(typeof q.answer_key==='string'?q.answer_key:JSON.stringify(q.answer_key))+'</pre><h3>评分细则</h3>'+q.rubric.map(r=>'<p>'+esc(r.criterion)+' <b>'+esc(r.score)+' 分</b></p>').join('')+(q.rubric.length?'':'<p class="muted">根据标准答案及题目规则评分。</p>')+'</details>').join(''):'<p class="empty">上传试卷后，点击 AI 生成答案。</p>';
  setupRegionEditor(docs);
  $('exportTeacher').href='/api/assessments/'+a.id+'/training-samples?kind=teacher';
  $('exportPseudo').href='/api/assessments/'+a.id+'/training-samples?kind=pseudo';
@@ -140,7 +141,7 @@ async function openSubmission(id,{force=false}={}){
  let nav=[];
  const navigable=()=>questions.map((q,i)=>i).filter(i=>{const g=s.grade_items.find(g=>g.question_id===questions[i].id);return $('reviewOnly').value==='all'||!g||(g.needs_review&&g.final_score==null);});
  $('submissionBody').className='';
- $('submissionBody').innerHTML='<div class="toolbar review-actions"><button id="viewSource" class="secondary">查看答卷原件 ↗</button><button id="deleteSubmission" class="text-button danger">删除答卷</button></div><div class="metrics"><div class="metric"><b>'+fmt(currentScore)+'</b>当前成绩</div><div class="metric"><b>'+fmt(summary.max_score)+'</b>试卷满分</div><div class="metric"><b>'+fmt(summary.review_recommended_count)+'</b>建议复核</div></div><div id="bulkArea"></div><div class="question-nav"><button id="prevQ" class="secondary">← 上一题</button><select id="questionSelect" aria-label="选择题号"></select><button id="nextQ" class="secondary">下一题 →</button></div><div id="questionArea"></div><details id="reviewAudit" class="review-audit"><summary>查看批改与复核历史（'+history.reduce((n,g)=>n+g.reviews.length,0)+' 次复核）</summary><div id="auditBody"></div></details>';
+ $('submissionBody').innerHTML=localRecognitionHtml(s)+'<div class="toolbar review-actions"><button id="viewSource" class="secondary">查看答卷原件 ↗</button><button id="deleteSubmission" class="text-button danger">删除答卷</button></div><div class="metrics"><div class="metric"><b>'+fmt(currentScore)+'</b>当前成绩</div><div class="metric"><b>'+fmt(summary.max_score)+'</b>试卷满分</div><div class="metric"><b>'+fmt(summary.review_recommended_count)+'</b>建议复核</div></div><div id="bulkArea"></div><div class="question-nav"><button id="prevQ" class="secondary">← 上一题</button><select id="questionSelect" aria-label="选择题号"></select><button id="nextQ" class="secondary">下一题 →</button></div><div id="questionArea"></div><details id="reviewAudit" class="review-audit"><summary>查看批改与复核历史（'+history.reduce((n,g)=>n+g.reviews.length,0)+' 次复核）</summary><div id="auditBody"></div></details>';
  $('viewSource').onclick=()=>showPreview('submission',id);
  $('deleteSubmission').disabled=activeJobs.has(id);
  $('deleteSubmission').onclick=()=>removeSubmission(id,$('deleteSubmission'));
@@ -324,7 +325,7 @@ let regionImage=null, regionSelection=null, regionStart=null, regionDocumentId=n
 function setupRegionEditor(docs){
  const supported=docs.filter(d=>d.kind==='question_paper'&&(d.media_type==='application/pdf'||d.media_type.startsWith('image/')||d.media_type==='application/msword'||d.media_type==='application/vnd.openxmlformats-officedocument.wordprocessingml.document'));
  $('regionDocument').innerHTML=supported.map((d,i)=>'<option value="'+esc(d.id)+'">原试卷 · 第 '+(i+1)+' 份资料</option>').join('');
- $('regionQuestion').innerHTML=editableRegionQuestions().map(q=>'<option value="'+esc(q.id)+'">第 '+esc(q.question_no)+' 题'+(q.rule_config?.region?' · 已配置':'')+'</option>').join('');
+ $('regionQuestion').innerHTML=editableRegionQuestions().map(q=>'<option value="'+esc(q.id)+'">'+esc(layoutQuestionLabel(q))+(q.rule_config?.region?' · 已配置':'')+'</option>').join('');
  $('regionSaveQuestion').innerHTML=$('regionQuestion').innerHTML;
  $('editRegions').disabled=false;$('editRegions').title=!supported.length?'请先上传原试卷':!current.questions.length?'请先生成或录入题目':'支持图片、PDF 和 Word 原卷';
 }
@@ -335,7 +336,7 @@ function drawRegion(){
 }
 function selectSavedRegion(){
  regionClickStart=null;regionStart=null;$('regionActions').hidden=true;
- const q=current?.questions?.find(q=>q.id===$('regionQuestion').value),r=q?.rule_config?.region;
+ const q=current?.questions?.find(q=>q.id===$('regionQuestion').value),r=q?.rule_config?.region||activeLayout?.items?.find(i=>i.question_id===q?.id)?.regions?.find(b=>b.page===regionLoadedPage);
  regionSelection=r&&r.page===regionLoadedPage?{...r}:null;drawRegion();
  $('regionStatus').textContent=!current?.questions?.length?'页面已加载，可以框选并预览；保存前请先生成参考答案或录入题目。':regionSelection?'已载入该题区域，可重新拖动修改':'可拖动框选；拖动不便时切换“两点框选”，依次点击区域两个对角。';
 }
@@ -373,7 +374,7 @@ function updateRegionSelection(start,end){
 function showRegionActions(){
  const choices=editableRegionQuestions();
  $('regionActions').hidden=false;$('regionCrop').hidden=true;$('regionActionStatus').textContent='';
- $('regionSaveQuestion').innerHTML=choices.length?choices.map(q=>'<option value="'+esc(q.id)+'">第 '+esc(q.question_no)+' 题'+(q.rule_config?.region?' · 将替换已存区域':'')+'</option>').join(''):'<option value="">暂无可保存题目</option>';
+ $('regionSaveQuestion').innerHTML=choices.length?choices.map(q=>'<option value="'+esc(q.id)+'">'+esc(layoutQuestionLabel(q))+(q.rule_config?.region?' · 将替换已存区域':'')+'</option>').join(''):'<option value="">暂无可保存题目</option>';
  if(choices.some(q=>q.id===$('regionQuestion').value))$('regionSaveQuestion').value=$('regionQuestion').value;
  $('regionSaveQuestion').disabled=!choices.length;$('saveRegion').disabled=!choices.length;
  $('regionSelectionInfo').textContent='第 '+regionLoadedPage+' 页 · 宽 '+Math.round(regionSelection.width*100)+'% · 高 '+Math.round(regionSelection.height*100)+'%';
@@ -381,7 +382,7 @@ function showRegionActions(){
 }
 function updateRegionSaveHint(){
  const q=editableRegionQuestions().find(q=>q.id===$('regionSaveQuestion').value);
- $('regionSaveHint').textContent=q?(q.rule_config?.region?'该题已有区域，保存会替换旧区域。':'保存后可继续框选下一题。'):'选择题无需框选；非选择题须先生成或录入题目。';
+ $('regionSaveHint').textContent=q?(q.rule_config?.region?'该题已有区域，保存会替换旧区域。':'若该题已有自动区域，本次保存会替换；可继续框选下一题。'):'选择题无需框选；非选择题须先生成或录入题目。';
 }
 $('regionSaveQuestion').onchange=updateRegionSaveHint;
 $('cancelRegion').onclick=()=>{regionSelection=null;regionStart=null;regionClickStart=null;$('regionActions').hidden=true;drawRegion();$('regionStatus').textContent='已取消本次框选，可重新选择区域。';};
@@ -416,10 +417,53 @@ async function persistRegion(remove){
  const region=remove?null:selectedRegion(),assessment=await api('/api/assessments/'+aid()),q=assessment.questions.find(q=>q.id===targetId);
  if(!q)throw Error('请选择有效题号；如尚无题目，请先生成或录入。');if(q.scoring_mode==='choice_set'||['single_choice','multiple_choice'].includes(q.question_type))throw Error('选择题自动识别，无需保存区域');const config={...q.rule_config};if(remove)delete config.region;else config.region=region;
  await api('/api/questions/'+q.id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({...q,rule_config:config})});
- q.rule_config=config;current.questions=assessment.questions;regionSaved=true;$('regionQuestion').innerHTML=editableRegionQuestions().map(item=>'<option value="'+esc(item.id)+'">第 '+esc(item.question_no)+' 题'+(item.rule_config?.region?' · 已配置':'')+'</option>').join('');$('regionQuestion').value=targetId;selectSavedRegion();$('regionStatus').textContent=remove?'区域已移除':'区域已保存，下次识别复用；已保存作答保持原样';
+ q.rule_config=config;current.questions=assessment.questions;regionSaved=true;$('regionQuestion').innerHTML=editableRegionQuestions().map(item=>'<option value="'+esc(item.id)+'">'+esc(layoutQuestionLabel(item))+(item.rule_config?.region?' · 已配置':'')+'</option>').join('');$('regionQuestion').value=targetId;selectSavedRegion();$('regionStatus').textContent=remove?'区域已移除':'区域已保存，下次识别复用；已保存作答保持原样';
 }
 action('saveRegion',async()=>{try{await persistRegion(false);}catch(e){$('regionActionStatus').textContent=e.message;throw e;}});action('removeRegion',()=>persistRegion(true));
 let trainingGrade=null;
 function openTraining(g,response){trainingGrade=g;$('trainingText').value=response?.raw_text||'';$('trainingApprover').value='';$('trainingConsent').checked=false;$('trainingDialog').showModal();}
 $('closeTraining').onclick=()=>{$('trainingDialog').close();};
 action('approveTraining',async()=>{if(!$('trainingConsent').checked)throw Error('请先检查脱敏文本并勾选批准');await api('/api/grade-items/'+trainingGrade.id+'/training-approval',json({redacted_text:$('trainingText').value,approved_by:$('trainingApprover').value,expected_review_id:trainingGrade.latest_review_id||null}));$('trainingDialog').close();notice('已批准脱敏样本。标签来源由实际人工复核记录决定。');});
+
+function layoutQuestionLabel(q){
+ const item=activeLayout?.items?.find(i=>i.question_id===q.id);
+ return item?.section?item.section+' / '+item.number:'题号 '+q.question_no;
+}
+async function loadLayoutStatus(docs){
+ const id=aid(),state=await api('/api/assessments/'+id+'/layout-template');if(current?.id!==id)return;
+ activeLayout=state;
+ if(docs)$('layoutDocument').innerHTML=docs.filter(d=>d.kind==='question_paper').map((d,i)=>'<option value="'+esc(d.id)+'">原卷 / 空白答题卡 · '+(i+1)+'</option>').join('');
+ if(state.document_id)$('layoutDocument').value=state.document_id;
+ $('layoutBadge').textContent=state.enabled?(state.stale?'模板待更新':'本地识别已启用'):state.exists?'已停用':'尚未配置';
+ $('layoutBadge').className='badge '+(state.enabled&&!state.stale?'':'neutral');
+ $('generateLayout').disabled=!current?.questions?.length||!$('layoutDocument').options.length;
+ $('previewLayout').disabled=!state.exists;$('toggleLayout').disabled=!state.exists;
+ $('toggleLayout').textContent=state.enabled?'停用并恢复原识别路径':'启用本地模板';
+ const deps=state.local_dependencies||{},missing=Object.entries(deps).filter(([_,v])=>!v).map(([k])=>k);
+ $('layoutState').textContent=state.enabled?(state.stale?'题目或来源已变更：请勾选重新生成；未更新前保留识别缺失，不回退视觉 API。':'模板已启用：'+state.items.length+' 道题，'+state.page_count+' 页。学生答卷仅本地识别；未定位或识别不确定的题保留缺分。'):'模板首次解析使用模型，重复点击复用有效模板；启用后不自动调用视觉 API。';
+ if(missing.length)$('layoutState').textContent+=' 当前服务缺少 '+missing.join(' / ')+'，请用优化版 GPU 环境启动。';
+ if(state.warnings?.length)$('layoutState').textContent+=' '+state.warnings.join('；');
+ $('layoutQuestions').innerHTML=(state.items||[]).map(item=>{const q=current.questions.find(q=>q.id===item.question_id);return q?'<span class="layout-question-chip"><b>'+esc(item.section||'未分组')+'</b> / '+esc(item.number||q.question_no)+' · '+(item.method==='omr'?'填涂检测':'文字 OCR')+(item.confidence<.9?' · 待核对':'')+'</span>':'';}).join('');
+}
+action('generateLayout',async()=>{
+ if(!current)throw Error('请先选择试卷');$('layoutState').textContent='正在解析原卷位置；本次只生成模板，请稍候。';
+ try{await api('/api/assessments/'+aid()+'/layout-template',json({document_id:$('layoutDocument').value,force:$('forceLayout').checked}));$('forceLayout').checked=false;await loadLayoutStatus();notice('自动模板已启用，后续答卷在本地识别。');}
+ catch(e){$('layoutState').textContent=e.message;throw e;}
+});
+action('toggleLayout',async()=>{await api('/api/assessments/'+aid()+'/layout-template',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled:!activeLayout.enabled})});await loadLayoutStatus();});
+$('previewLayout').onclick=()=>{$('layoutPreviewPage').value='1';$('layoutPreviewDialog').showModal();$('loadLayoutPreview').click();};
+$('closeLayoutPreview').onclick=()=>{$('layoutPreviewDialog').close();};
+action('loadLayoutPreview',async()=>{
+ const page=Number($('layoutPreviewPage').value);if(!Number.isInteger(page)||page<1)throw Error('请输入有效页码');
+ $('layoutPreviewStatus').textContent='正在加载标注页…';
+ const response=await fetch('/api/assessments/'+aid()+'/layout-template/page?page='+page);
+ if(!response.ok){const e=await response.json();$('layoutPreviewStatus').textContent=e.detail;throw Error(e.detail);}
+ const url=URL.createObjectURL(await response.blob());const image=$('layoutPreviewImage');image.src=url;
+ try{await image.decode();$('layoutPreviewStatus').textContent='第 '+page+' 页 · 自动定位结果';}finally{URL.revokeObjectURL(url);}
+});
+
+function localRecognitionHtml(submission){
+ const report=submission.normalization_report?.local_recognition;if(!report)return '';
+ const missing=report.missing||[],warnings=report.warnings||[];
+ return '<div class="local-recognition-note '+(missing.length?'incomplete':'')+'"><strong>本地答卷识别 · 未调用视觉 API</strong><p>'+(missing.length?'尚未可靠识别：'+missing.map(esc).join('、')+'。这些题保留缺分，可校正作答后重批。':'所有题均已有可靠识别或人工校正结果。')+'</p>'+(warnings.length?'<details><summary>识别详情</summary>'+warnings.slice(0,20).map(w=>'<p>'+esc(w)+'</p>').join('')+'</details>':'')+'</div>';
+}

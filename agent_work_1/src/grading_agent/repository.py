@@ -113,6 +113,7 @@ def create_question(assessment_id: str, data: dict[str, Any]) -> dict[str, Any]:
 
 def update_question(question_id: str, data: dict[str, Any]) -> dict[str, Any]:
     with transaction() as connection:
+        previous = connection.execute('SELECT * FROM questions WHERE id=?',(question_id,)).fetchone()
         cursor = connection.execute(
             """UPDATE questions SET question_no=?,prompt=?,question_type=?,capture_mode=?,answer_form=?,
             scoring_mode=?,max_score=?,answer_key=?,answer_key_state=?,rule_config=?,rubric=?,review_policy=?
@@ -126,6 +127,26 @@ def update_question(question_id: str, data: dict[str, Any]) -> dict[str, Any]:
         )
         if not cursor.rowcount:
             raise LookupError("题目不存在")
+        old_region = decode_json(previous['rule_config'], {}).get('region') if previous else None
+        new_region = data.get('rule_config', {}).get('region')
+        layout = connection.execute('SELECT payload FROM assessment_layouts WHERE assessment_id=?',
+                                    (previous['assessment_id'],)).fetchone() if previous else None
+        if layout and new_region != old_region:
+            from .schemas import RegionInput
+            content = decode_json(layout['payload'], {})
+            original_item = next((i for i in content['items'] if i['question_id']==question_id), {})
+            content['items'] = [i for i in content['items'] if i['question_id'] != question_id]
+            if new_region:
+                b = RegionInput.model_validate(new_region).model_dump(exclude_none=True)
+                if b['page'] not in {p['page'] for p in content['pages']}:
+                    raise ValueError('纠错区域页码不在自动模板中')
+                content['items'].append({'question_id':question_id, 'section':original_item.get('section','人工校正'),
+                                        'number':original_item.get('number',data['question_no']),'method':'text','confidence':1.,
+                                        'regions':[{k:b[k] for k in ('page','x','y','width','height')}], 'options':[]})
+            import hashlib
+            content['template_id'] = hashlib.sha256(encode_json(content['items']).encode()).hexdigest()
+            connection.execute('UPDATE assessment_layouts SET payload=? WHERE assessment_id=?',
+                               (encode_json(content),previous['assessment_id']))
         return row_dict(connection.execute("SELECT * FROM questions WHERE id=?", (question_id,)).fetchone())  # type: ignore[return-value]
 
 

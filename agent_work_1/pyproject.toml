@@ -24,6 +24,10 @@ dev = [
   "httpx>=0.28,<1",
   "pytest>=8.3,<10",
 ]
+local_recognition = [
+  "opencv-python-headless>=4.10,<5",
+  "numpy>=1.26,<3",
+]
 ocr = [
   "paddleocr>=3.7,<4",
   "paddlepaddle>=3.3,<4",

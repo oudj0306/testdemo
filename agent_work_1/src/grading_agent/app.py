@@ -102,7 +102,9 @@ def persist_submission(
     if saved_submission:
         answer_layout = saved_submission.get('normalization_report', {}).get('answer_layout', answer_layout)
     answer_layout = validate_answer_layout(answer_layout)
-    has_regions = any(q.get("rule_config", {}).get("region") for q in assessment["questions"])
+    from .services.layout_templates import load_layout
+    local_layout = load_layout(assessment)
+    has_regions = bool(local_layout) or any(q.get("rule_config", {}).get("region") for q in assessment["questions"])
     # Text-only route is opt-in; formulas/diagrams keep their visual input.
     text_types = {'single_choice', 'multiple_choice', 'true_false', 'short_answer', 'essay', 'reading'}
     local_first = (answer_layout == 'answer_list' and settings.local_ocr_first
@@ -135,6 +137,26 @@ def persist_submission(
                 db.execute('INSERT OR IGNORE INTO submission_pages(id,submission_id,page_no,image_path,width,height,quality_state,quality_report) VALUES (?,?,?,?,?,?,?,?)', (new_id(),existing_id,page['page_no'],page['image_path'],page['width'],page['height'],page['quality_state'],encode_json(page['quality_report'])))
     retained_ids = reusable_answer_ids(assessment['questions'], submission['responses'], settings)
     pending_questions = [q for q in assessment['questions'] if q['id'] not in retained_ids]
+    if local_layout:
+        # Enabling a layout explicitly chooses local recognition. No hidden paid
+        # fallback, including stale templates, missing pages or OCR failures.
+        from .services.local_answers import recognize_answers
+        answers, warnings, diagnostics = recognize_answers(local_layout, document.pages, pending_questions, settings)
+        for answer in answers:
+            upsert_response(submission['id'], answer['question_id'], answer['raw_text'],
+                            answer['confidence'], answer['blank_confirmed'], answer['source'])
+        saved = get_submission(submission['id'])
+        reliable = reusable_answer_ids(assessment['questions'], saved['responses'], settings)
+        missing = [q['question_no'] for q in assessment['questions'] if q['id'] not in reliable]
+        report['local_recognition'] = {**diagnostics, 'warnings': warnings, 'missing': missing,
+                                     'mode': 'local_only', 'remote_vision_requests': 0}
+        with transaction() as db:
+            db.execute('UPDATE submissions SET status=?,normalization_report=? WHERE id=?',
+                       ('extraction_failed' if missing else 'extracted', encode_json(report), submission['id']))
+        result = get_submission(submission['id'])
+        if missing:
+            result['extraction_warning'] = '本地识别未完成：' + '、'.join(missing) + '。' + '；'.join(warnings)
+        return result
     # Choice marks are localized by the visual extractor, never by plain region OCR.
     crops = crop_question_regions(document.pages, [q for q in pending_questions if not is_choice_question(q)], settings)
     ocr = OCRAdapter(settings.ocr_provider)
@@ -722,7 +744,7 @@ def submission_grade(submission_id: str, pending_only: bool = False) -> dict[str
             saved = get_submission(submission_id)
             if saved and saved['status'] in {'uploaded', 'extraction_failed'}:
                 prepared = prepare_submission(submission_id)
-                if prepared.get('extraction_warning'):
+                if prepared.get('extraction_warning') and prepared.get('normalization_report', {}).get('local_recognition', {}).get('mode') != 'local_only':
                     raise ValueError(prepared['extraction_warning'])
             return grade_submission(submission_id, settings, pending_only=pending_only)
     except SubmissionBusyError as exc:

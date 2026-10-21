@@ -165,7 +165,7 @@ def test_home_disables_stale_html_cache():
     with TestClient(app) as client:
         response = client.get('/')
         assert response.headers['cache-control'] == 'no-store'
-        assert 'region-save-v5' in response.text
+        assert 'local-layout-v6' in response.text
 
 
 def test_region_pointer_modes_scale_and_work_before_questions():
@@ -207,7 +207,7 @@ const fs=require('fs'),vm=require('vm'),assert=require('assert');
 const text=fs.readFileSync(process.argv[1],'utf8');const elements={};
 const $=id=>elements[id]??={value:'q2'};
 const selection={width:.3,height:.2};
-const env={$,esc:String,current:{questions:[{id:'q1',question_no:'1',scoring_mode:'choice_set'},{id:'q2',question_no:'2',rule_config:{}},{id:'q3',question_no:'3',rule_config:{region:{page:1}}}]},regionLoadedPage:1,regionSelection:selection};
+const env={$,esc:String,layoutQuestionLabel:q=>q.question_no,current:{questions:[{id:'q1',question_no:'1',scoring_mode:'choice_set'},{id:'q2',question_no:'2',rule_config:{}},{id:'q3',question_no:'3',rule_config:{region:{page:1}}}]},regionLoadedPage:1,regionSelection:selection};
 vm.createContext(env);
 vm.runInContext(text.slice(text.indexOf('function editableRegionQuestions(){'),text.indexOf('// Region coordinates always')),env);
 vm.runInContext(text.slice(text.indexOf('function showRegionActions(){'),text.indexOf('function regionSelectionFeedback(){')),env);
