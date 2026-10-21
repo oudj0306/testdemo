@@ -165,4 +165,32 @@ def test_home_disables_stale_html_cache():
     with TestClient(app) as client:
         response = client.get('/')
         assert response.headers['cache-control'] == 'no-store'
-        assert 'region-dialog-v3' in response.text
+        assert 'region-input-v4' in response.text
+
+
+def test_region_pointer_modes_scale_and_work_before_questions():
+    import shutil
+    node = shutil.which('node') or r'C:/Users/admin/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node.exe'
+    if not Path(node).exists():
+        pytest.skip('Node runtime unavailable')
+    source = Path(__file__).resolve().parents[1]/'src/grading_agent/static/app.js'
+    script = r"""
+const fs=require('fs'),vm=require('vm'),assert=require('assert');
+const text=fs.readFileSync(process.argv[1],'utf8');
+const code=text.slice(text.indexOf('const regionCanvas='),text.indexOf("action('previewRegion'"));
+const elements={},ctx={fillRect(){}};
+const $=id=>elements[id]??={value:'drag',width:1000,height:2000,getBoundingClientRect(){return {left:100,top:50,width:500,height:1000}},getContext(){return ctx},setPointerCapture(){}};
+const env={$,current:{questions:[]},regionLoadedPage:1,regionSelection:null,regionStart:null,regionClickStart:null,drawRegion(){}};
+vm.createContext(env);vm.runInContext(code,env);
+const event=(x,y)=>({clientX:x,clientY:y,button:0,pointerId:1,preventDefault(){}});
+const canvas=$('regionCanvas');
+canvas.onpointerdown(event(200,250));canvas.onpointerup(event(400,650));
+assert.equal(env.regionSelection.x,.2);assert.equal(env.regionSelection.y,.2);
+assert(Math.abs(env.regionSelection.width-.4)<1e-9);assert(Math.abs(env.regionSelection.height-.4)<1e-9);
+assert($('regionStatus').textContent.includes('尚无题目'));
+$('regionMode').value='corners';$('regionMode').onchange();
+canvas.onpointerdown(event(400,650));assert($('regionStatus').textContent.includes('第一个角'));
+canvas.onpointerdown(event(200,250));assert(Math.abs(env.regionSelection.width-.4)<1e-9);
+env.regionLoadedPage=null;canvas.onpointerdown(event(100,100));assert($('regionStatus').textContent.includes('先加载'));
+"""
+    subprocess.run([str(node), '-e', script, str(source)], check=True, capture_output=True, text=True)

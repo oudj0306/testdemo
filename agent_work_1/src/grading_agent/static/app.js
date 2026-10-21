@@ -319,7 +319,7 @@ function wrapTables(container){container.querySelectorAll('table').forEach(table
 (async()=>{await Promise.all([refreshHealth(),assessments(),loadSettings()].map(p=>p.catch(e=>notice(e.message,true))));})();
 
 // Region coordinates always refer to the source page, independent of CSS scaling.
-let regionImage=null, regionSelection=null, regionStart=null, regionDocumentId=null, regionLoadedPage=null, regionPreviewUrl=null, regionSaved=false;
+let regionImage=null, regionSelection=null, regionStart=null, regionDocumentId=null, regionLoadedPage=null, regionPreviewUrl=null, regionSaved=false,regionClickStart=null;
 function setupRegionEditor(docs){
  const supported=docs.filter(d=>d.kind==='question_paper'&&(d.media_type==='application/pdf'||d.media_type.startsWith('image/')||d.media_type==='application/msword'||d.media_type==='application/vnd.openxmlformats-officedocument.wordprocessingml.document'));
  $('regionDocument').innerHTML=supported.map((d,i)=>'<option value="'+esc(d.id)+'">原试卷 · 第 '+(i+1)+' 份资料</option>').join('');
@@ -332,17 +332,18 @@ function drawRegion(){
  if(regionSelection){const r=regionSelection;ctx.fillStyle='rgba(44,100,240,.15)';ctx.fillRect(r.x*canvas.width,r.y*canvas.height,r.width*canvas.width,r.height*canvas.height);ctx.strokeStyle='#245de0';ctx.lineWidth=Math.max(2,canvas.width/400);ctx.strokeRect(r.x*canvas.width,r.y*canvas.height,r.width*canvas.width,r.height*canvas.height);}
 }
 function selectSavedRegion(){
+ regionClickStart=null;regionStart=null;
  const q=current?.questions?.find(q=>q.id===$('regionQuestion').value),r=q?.rule_config?.region;
  regionSelection=r&&r.page===regionLoadedPage?{...r}:null;drawRegion();
- $('regionStatus').textContent=!current?.questions?.length?'原试卷已加载。请先生成参考答案或录入题目，再为题号保存答题区域。':regionSelection?'已载入该题区域，可重新拖动修改':'拖动鼠标框选学生实际作答区域，避免印刷题干';
+ $('regionStatus').textContent=!current?.questions?.length?'页面已加载，可以框选并预览；保存前请先生成参考答案或录入题目。':regionSelection?'已载入该题区域，可重新拖动修改':'可拖动框选；拖动不便时切换“两点框选”，依次点击区域两个对角。';
 }
 function openRegionEditor(){
- regionSaved=false;regionImage=null;regionLoadedPage=null;regionSelection=null;regionStart=null;
+ regionSaved=false;regionImage=null;regionLoadedPage=null;regionSelection=null;regionStart=null;regionClickStart=null;
  $('regionCanvas').width=0;$('regionCrop').hidden=true;
  const canRender=!!current&&$('regionDocument').options.length>0,hasQuestions=!!current?.questions?.length;
  const problem=!current?'请先新建或选择试卷。':!canRender?'请先在试卷资料中上传原试卷（Word、PDF 或图片）。':!hasQuestions?'可先预览原试卷；请先生成参考答案或录入题目，再为题号保存答题区域。':'';
- for(const id of ['loadRegionPage','regionDocument','regionPage'])$(id).disabled=!canRender;
- for(const id of ['regionQuestion','previewRegion','saveRegion','removeRegion'])$(id).disabled=!canRender||!hasQuestions;
+ for(const id of ['loadRegionPage','regionDocument','regionPage','regionMode','previewRegion'])$(id).disabled=!canRender;
+ for(const id of ['regionQuestion','saveRegion','removeRegion'])$(id).disabled=!canRender||!hasQuestions;
  $('regionStatus').textContent=problem||'在原试卷上框选学生将填写答案的空白位置。';
  $('regionStatus').className=problem?'region-guidance':'region-guidance ready';
  if(!$('regionDialog').open)$('regionDialog').showModal();
@@ -352,8 +353,8 @@ $('editRegions').onclick=openRegionEditor;
 $('regionPrepare').onclick=()=>{$('regionDialog').close();const target=!current?$('newAssessment'):!$('regionDocument').options.length?$('paperFiles'):!current.questions.length?$('generate'):$('editRegions');target.scrollIntoView({block:'center'});target.focus();};
 $('closeRegions').onclick=()=>{$('regionDialog').close();};
 $('regionDialog').addEventListener('close',()=>{if(regionPreviewUrl)URL.revokeObjectURL(regionPreviewUrl);if(regionSaved)loadAssessment().catch(e=>notice(e.message,true));});
-$('regionDocument').onchange=()=>{regionLoadedPage=null;regionSelection=null;$('regionStatus').textContent='请重新加载页面';};
-$('regionPage').oninput=()=>{regionLoadedPage=null;regionSelection=null;$('regionStatus').textContent='请重新加载页面';};
+$('regionDocument').onchange=()=>{regionLoadedPage=null;regionSelection=null;regionStart=null;regionClickStart=null;$('regionStatus').textContent='请重新加载页面';};
+$('regionPage').oninput=()=>{regionLoadedPage=null;regionSelection=null;regionStart=null;regionClickStart=null;$('regionStatus').textContent='请重新加载页面';};
 $('regionQuestion').onchange=selectSavedRegion;
 action('loadRegionPage',async()=>{
  const doc=$('regionDocument').value,page=Number($('regionPage').value);if(!Number.isInteger(page)||page<1)throw Error('请输入有效页码');$('regionStatus').textContent='正在加载页面；Word 原卷首次需要本机转换为 PDF，请稍候。';
@@ -364,9 +365,29 @@ action('loadRegionPage',async()=>{
 });
 const regionCanvas=$('regionCanvas');
 function regionPoint(e){const rect=regionCanvas.getBoundingClientRect();return {x:Math.max(0,Math.min(1,(e.clientX-rect.left)/rect.width)),y:Math.max(0,Math.min(1,(e.clientY-rect.top)/rect.height))};}
-regionCanvas.onpointerdown=e=>{if(!regionLoadedPage||!current?.questions?.length)return;regionStart=regionPoint(e);regionCanvas.setPointerCapture(e.pointerId);};
-regionCanvas.onpointermove=e=>{if(!regionStart)return;const end=regionPoint(e);regionSelection={page:regionLoadedPage,x:Math.min(end.x,regionStart.x),y:Math.min(end.y,regionStart.y),width:Math.abs(end.x-regionStart.x),height:Math.abs(end.y-regionStart.y),page_aspect:regionCanvas.width/regionCanvas.height};drawRegion();};
-regionCanvas.onpointerup=()=>{regionStart=null;};regionCanvas.onpointercancel=()=>{regionStart=null;};
+function updateRegionSelection(start,end){
+ regionSelection={page:regionLoadedPage,x:Math.min(end.x,start.x),y:Math.min(end.y,start.y),width:Math.abs(end.x-start.x),height:Math.abs(end.y-start.y),page_aspect:regionCanvas.width/regionCanvas.height};drawRegion();
+}
+function regionSelectionFeedback(){
+ const valid=regionSelection?.width>0&&regionSelection?.height>0;
+ $('regionStatus').textContent=valid?'已框选区域，可预览裁切。'+(current?.questions?.length?'确认题号后点击“保存该题区域”。':'尚无题目：可预览，生成或录入题目后才能保存。'):'区域过小，请重新选择两个不同的对角。';
+}
+$('regionMode').onchange=()=>{regionStart=null;regionClickStart=null;$('regionStatus').textContent=$('regionMode').value==='corners'?'两点框选：先点击左上角，再点击右下角（也可反向）。':'拖动框选：按住鼠标左键拖动，再松开。';};
+regionCanvas.onpointerdown=e=>{
+ if(!regionLoadedPage){$('regionStatus').textContent='请先加载页面，页面显示后再框选。';return;}
+ if(e.button!==undefined&&e.button!==0)return;
+ e.preventDefault();const point=regionPoint(e);
+ if($('regionMode').value==='corners'){
+  if(regionClickStart){updateRegionSelection(regionClickStart,point);regionClickStart=null;regionSelectionFeedback();}
+  else{regionClickStart=point;regionSelection=null;drawRegion();const ctx=regionCanvas.getContext('2d');ctx.fillStyle='#e14b32';ctx.fillRect(point.x*regionCanvas.width-5,point.y*regionCanvas.height-5,10,10);$('regionStatus').textContent='第一个角已选中，请点击另一个对角。';}
+  return;
+ }
+ regionStart=point;regionSelection=null;drawRegion();regionCanvas.setPointerCapture(e.pointerId);
+ $('regionStatus').textContent='正在框选，拖到区域另一个角后松开鼠标。';
+};
+regionCanvas.onpointermove=e=>{if(regionStart)updateRegionSelection(regionStart,regionPoint(e));};
+regionCanvas.onpointerup=e=>{if(!regionStart)return;updateRegionSelection(regionStart,regionPoint(e));regionStart=null;regionSelectionFeedback();};
+regionCanvas.onpointercancel=()=>{regionStart=null;};
 function selectedRegion(){if(!regionSelection||!regionLoadedPage||regionSelection.width<=0||regionSelection.height<=0)throw Error('请先框选有效区域');return regionSelection;}
 action('previewRegion',async()=>{
  const response=await fetch('/api/assessments/'+aid()+'/template-preview?document_id='+encodeURIComponent(regionDocumentId),json(selectedRegion()));
