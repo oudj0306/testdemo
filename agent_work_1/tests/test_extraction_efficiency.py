@@ -211,3 +211,51 @@ def test_teacher_edit_during_model_request_is_preserved(monkeypatch):
     result = module.persist_submission(assessment, 'student', b'content', 'image/png', submission['id'])
     assert result['responses'][0]['raw_text'] == '教师校正'
     assert result['responses'][0]['extraction_source'] == 'manual'
+
+
+@pytest.mark.parametrize('kind,mode', [('single_choice','choice_set'), ('multiple_choice','choice_set'), ('custom','choice_set')])
+def test_choice_plain_ocr_is_not_reused_as_selected_marks(kind, mode):
+    from grading_agent.services.answer_extractor import is_choice_question
+    question = {**questions()[0], 'question_type': kind, 'scoring_mode': mode}
+    response = {'question_id': question['id'], 'raw_text': 'ABCD', 'blank_confirmed': False,
+                'ocr_confidence': .999, 'extraction_source': 'paddleocr_gpu:0'}
+    assert is_choice_question(question)
+    assert question['id'] not in reusable_answer_ids([question], [response], get_settings())
+    response['extraction_source'] = 'manual'
+    assert question['id'] in reusable_answer_ids([question], [response], get_settings())
+
+
+@pytest.mark.parametrize('old_region', [False, True])
+def test_choice_upload_without_manual_boxes_extracts_then_grades_with_rules(monkeypatch, old_region):
+    from fastapi.testclient import TestClient
+    from PIL import Image
+    from grading_agent import config
+    from grading_agent.app import app
+    from grading_agent.services.ingestion import OCRAdapter
+    from grading_agent.services.llm_grader import OpenAIGrader
+    monkeypatch.setattr(config, '_settings_cache', replace(get_settings(), openai_api_key='synthetic',
+                        ocr_provider='paddleocr', local_ocr_first=True))
+    monkeypatch.setattr(OCRAdapter, 'extract', lambda *a: pytest.fail('Choice marks must not use plain OCR'))
+    monkeypatch.setattr(OpenAIGrader, 'grade', lambda *a: pytest.fail('Choice scoring must use rules'))
+    calls = mock_model(monkeypatch, [{'question_no':'1','raw_text':'B','confidence':.99,'blank_confirmed':False}])
+    picture=io.BytesIO()
+    Image.new('RGB',(400,600),'white').save(picture,format='PNG')
+    with TestClient(app) as client:
+        a=client.post('/api/assessments',json={'title':'Synthetic choice','subject_codes':[]}).json()
+        region={'region':{'page':1,'x':.1,'y':.1,'width':.5,'height':.2}} if old_region else {}
+        q=client.post(f"/api/assessments/{a['id']}/questions",json={
+            'question_no':'1','prompt':'Select A/B/C/D','question_type':'single_choice',
+            'scoring_mode':'choice_set','max_score':5,'answer_key':'B','rule_config':region})
+        assert q.status_code==200
+        assert client.post(f"/api/assessments/{a['id']}/publish").status_code==200
+        result=client.post('/api/submissions',data={'assessment_id':a['id'],'student_ref':'synthetic','answer_layout':'answer_list'},
+                           files={'file':('synthetic.png',picture.getvalue(),'image/png')})
+        assert result.status_code==200, result.text
+        result=result.json()
+        assert result['responses'][0]['raw_text']=='B'
+        assert result['responses'][0]['extraction_source']=='openai_vision'
+        graded=client.post(f"/api/submissions/{result['id']}/grade")
+        assert graded.status_code==200, graded.text
+        assert graded.json()['grade_items'][0]['score']==5
+        assert graded.json()['grade_items'][0]['grader_kind']=='rules'
+        assert len(calls)==1

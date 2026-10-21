@@ -54,7 +54,7 @@ def layout_instructions(layout: str) -> str:
     validate_answer_layout(layout)
     common = (
         "只转写学生实际填写、书写、勾选或输入的作答，不解题、不补全、不评分。"
-        "印刷题干、选项文字、示例、页眉及标准答案不是学生作答；选择题只记学生明确选中的选项。"
+        "印刷题干、选项文字、示例、页眉及标准答案不是学生作答；选择题按题号自动定位，不需要教师框选。只记录学生明确涂黑、勾选或写出的选项字母，不能把印刷的 A/B/C/D 全部当作作答。遇到浅涂、擦改、单选题多涂或题号对应不清时，不猜测，应降低 confidence 并保留不确定状态。"
         "同题有多个空或小问时保留原有顺序和标号，主观题保留完整步骤。"
         "只有亲眼看到该题完整作答位置确实空白，才可设置 blank_confirmed=true；"
         "若题目、页码或作答区域未找到、看不清或无法区分印刷与填写内容，返回空 raw_text、"
@@ -94,6 +94,10 @@ def validate_answers(value, questions):
     return answers
 
 
+def is_choice_question(question):
+    return question.get('scoring_mode') == 'choice_set' or question.get('question_type') in {'single_choice', 'multiple_choice'}
+
+
 def reusable_answer_ids(questions, responses, settings):
     """Reuse only explicit human input or reliable, non-contradictory extraction."""
     by_id = {question['id']: question for question in questions}
@@ -104,6 +108,9 @@ def reusable_answer_ids(questions, responses, settings):
             continue
         if response.get('extraction_source') == 'manual':
             reusable.add(question_id)
+            continue
+        # Plain OCR cannot distinguish printed option labels from filled bubbles.
+        if is_choice_question(by_id[question_id]) and str(response.get('extraction_source', '')).startswith('paddleocr'):
             continue
         text_present = bool(str(response.get('raw_text') or '').strip())
         blank_confirmed = bool(response.get('blank_confirmed'))

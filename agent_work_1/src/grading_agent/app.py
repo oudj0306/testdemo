@@ -55,7 +55,7 @@ from .services.grading import grade_submission
 from .services.ingestion import OCRAdapter, crop_question_regions, extract_reference_text, ingest_document, sniff_media_type, ALLOWED_MEDIA
 from .services.question_classifier import infer_question_route
 from .services.assessment_compiler import compile_question_paper, fill_missing_parts
-from .services.answer_extractor import extract_answers_with_model, reusable_answer_ids, validate_answer_layout
+from .services.answer_extractor import extract_answers_with_model, reusable_answer_ids, validate_answer_layout, is_choice_question
 from .services.llm_client import parse_json_object, response_output_text
 from .services.model_transport import model_request
 
@@ -107,7 +107,7 @@ def persist_submission(
     text_types = {'single_choice', 'multiple_choice', 'true_false', 'short_answer', 'essay', 'reading'}
     local_first = (answer_layout == 'answer_list' and settings.local_ocr_first
                    and settings.ocr_provider == 'paddleocr'
-                   and all(q['question_type'] in text_types for q in assessment['questions']))
+                   and all(q['question_type'] in text_types and not is_choice_question(q) for q in assessment['questions']))
     document = ingest_document(content, content_type, settings, render_pages=has_regions or local_first,
                                render_word_pages=has_regions)
     pages = [
@@ -135,7 +135,8 @@ def persist_submission(
                 db.execute('INSERT OR IGNORE INTO submission_pages(id,submission_id,page_no,image_path,width,height,quality_state,quality_report) VALUES (?,?,?,?,?,?,?,?)', (new_id(),existing_id,page['page_no'],page['image_path'],page['width'],page['height'],page['quality_state'],encode_json(page['quality_report'])))
     retained_ids = reusable_answer_ids(assessment['questions'], submission['responses'], settings)
     pending_questions = [q for q in assessment['questions'] if q['id'] not in retained_ids]
-    crops = crop_question_regions(document.pages, pending_questions, settings)
+    # Choice marks are localized by the visual extractor, never by plain region OCR.
+    crops = crop_question_regions(document.pages, [q for q in pending_questions if not is_choice_question(q)], settings)
     ocr = OCRAdapter(settings.ocr_provider)
     for question in assessment["questions"]:
         crop = crops.get(question["id"])

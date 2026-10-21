@@ -148,7 +148,7 @@ for(const [current,documents,expected,disabled] of [
  const elements={};let loads=0;
  const $=id=>elements[id]??=( {options:id==='regionDocument'?Array(documents):[],value:'q',open:false,
  showModal(){this.open=true;},click(){loads++;},close(){this.open=false;},scrollIntoView(){},focus(){this.focused=true;}} );
- const context={current,$};vm.createContext(context);vm.runInContext(code+';openRegionEditor();',context);
+ const context={current,$};vm.createContext(context);vm.runInContext(text.slice(text.indexOf('function editableRegionQuestions(){'),text.indexOf('// Region coordinates always')),context);vm.runInContext(code+';openRegionEditor();',context);
  assert($('regionDialog').open);assert($('regionStatus').textContent.includes(expected));
  assert.equal($('saveRegion').disabled,disabled);assert.equal(loads,current&&documents?1:0);
  if(!disabled)assert.equal($('regionPage').value,'2');
@@ -165,7 +165,7 @@ def test_home_disables_stale_html_cache():
     with TestClient(app) as client:
         response = client.get('/')
         assert response.headers['cache-control'] == 'no-store'
-        assert 'region-input-v4' in response.text
+        assert 'region-save-v5' in response.text
 
 
 def test_region_pointer_modes_scale_and_work_before_questions():
@@ -180,7 +180,7 @@ const text=fs.readFileSync(process.argv[1],'utf8');
 const code=text.slice(text.indexOf('const regionCanvas='),text.indexOf("action('previewRegion'"));
 const elements={},ctx={fillRect(){}};
 const $=id=>elements[id]??={value:'drag',width:1000,height:2000,getBoundingClientRect(){return {left:100,top:50,width:500,height:1000}},getContext(){return ctx},setPointerCapture(){}};
-const env={$,current:{questions:[]},regionLoadedPage:1,regionSelection:null,regionStart:null,regionClickStart:null,drawRegion(){}};
+const env={$,current:{questions:[]},regionLoadedPage:1,regionSelection:null,regionStart:null,regionClickStart:null,drawRegion(){},editableRegionQuestions(){return []},esc:String};
 vm.createContext(env);vm.runInContext(code,env);
 const event=(x,y)=>({clientX:x,clientY:y,button:0,pointerId:1,preventDefault(){}});
 const canvas=$('regionCanvas');
@@ -194,3 +194,28 @@ canvas.onpointerdown(event(200,250));assert(Math.abs(env.regionSelection.width-.
 env.regionLoadedPage=null;canvas.onpointerdown(event(100,100));assert($('regionStatus').textContent.includes('先加载'));
 """
     subprocess.run([str(node), '-e', script, str(source)], check=True, capture_output=True, text=True)
+
+
+def test_region_save_picker_keeps_draft_and_excludes_choices():
+    import shutil
+    node = shutil.which('node')
+    if not node:
+        pytest.skip('Node runtime unavailable')
+    source = Path(__file__).resolve().parents[1]/'src/grading_agent/static/app.js'
+    script = r"""
+const fs=require('fs'),vm=require('vm'),assert=require('assert');
+const text=fs.readFileSync(process.argv[1],'utf8');const elements={};
+const $=id=>elements[id]??={value:'q2'};
+const selection={width:.3,height:.2};
+const env={$,esc:String,current:{questions:[{id:'q1',question_no:'1',scoring_mode:'choice_set'},{id:'q2',question_no:'2',rule_config:{}},{id:'q3',question_no:'3',rule_config:{region:{page:1}}}]},regionLoadedPage:1,regionSelection:selection};
+vm.createContext(env);
+vm.runInContext(text.slice(text.indexOf('function editableRegionQuestions(){'),text.indexOf('// Region coordinates always')),env);
+vm.runInContext(text.slice(text.indexOf('function showRegionActions(){'),text.indexOf('function regionSelectionFeedback(){')),env);
+vm.runInContext('showRegionActions()',env);
+assert.equal($('regionActions').hidden,false);assert(!$('regionSaveQuestion').innerHTML.includes('value="q1"'));
+assert($('regionSaveQuestion').innerHTML.includes('value="q3"'));
+$('regionSaveQuestion').value='q3';$('regionSaveQuestion').onchange();
+assert.strictEqual(env.regionSelection,selection);assert($('regionSaveHint').textContent.length>0);
+assert.equal($('saveRegion').disabled,false);
+"""
+    subprocess.run([node, '-e', script, str(source)], check=True, capture_output=True, text=True)

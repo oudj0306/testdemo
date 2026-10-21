@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="theme-color" content="#253d66"><title>阅知 · 阅卷工作台</title>
-  <link rel="stylesheet" href="/static/style.css?v=20261021-region4">
+  <link rel="stylesheet" href="/static/style.css?v=20261021-region5">
 </head>
 <body>
 <a class="skip-link" href="#mainContent">跳到工作区</a>
@@ -46,7 +46,7 @@
   <section id="upload" class="tab" hidden>
     <div class="card upload-card"><div class="section-title"><div><span class="section-kicker">COLLECT FIRST, GRADE LATER</span><h2>收集学生答卷</h2></div><span class="badge">上传不消耗模型 Token</span></div>
       <label class="file-zone" id="answerDropZone"><svg class="upload-art" viewBox="0 0 56 56" fill="none" aria-hidden="true"><rect x="13" y="6" width="30" height="42" rx="5" stroke="currentColor" stroke-width="1.5"/><path d="M21 17h14M21 23h14M28 40V30m-4 4 4-4 4 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg><strong>选择答卷，或拖放文件到这里</strong><span>照片 / PDF / Word · 一份文件对应一名学生 · 多页请合并为 PDF</span><input id="answerFiles" type="file" multiple accept=".doc,.pdf,.docx,.jpg,.jpeg,.png,.webp"><small id="answerFileHint">每个文件不超过 25 MB；同卷同内容自动去重</small></label>
-      <input id="folderFiles" type="file" webkitdirectory hidden><div class="toolbar upload-actions"><label class="sort-label">作答形式<select id="answerLayout"><option value="auto">自动判断</option><option value="answer_list">仅答案列表</option><option value="on_paper">直接写在试卷上</option></select></label><button id="batch">上传所选答卷</button><button id="uploadFolder" class="secondary">选择文件夹</button><button id="goMark" class="text-button push-right">下一步：开始批阅 →</button></div><p class="muted small">没有答题卡也可上传完整试卷；选择作答形式只影响识别，所有题仍按已确认的标准批改。</p><div id="uploadResults" aria-live="polite"></div>
+      <input id="folderFiles" type="file" webkitdirectory hidden><div class="toolbar upload-actions"><label class="sort-label">作答形式<select id="answerLayout"><option value="auto">自动判断</option><option value="answer_list">仅答案列表</option><option value="on_paper">直接写在试卷上</option></select></label><button id="batch">上传所选答卷</button><button id="uploadFolder" class="secondary">选择文件夹</button><button id="goMark" class="text-button push-right">下一步：开始批阅 →</button></div><p class="muted small">选择题无需框选：上传答卷后自动识别选项，按标准答案规则判分。自动识别需配置视觉模型并消耗识别用量。没有答题卡也可上传完整试卷。</p><div id="uploadResults" aria-live="polite"></div>
     </div>
     <div class="card"><div class="section-title"><h2>已收集的答卷</h2><span class="muted small">原件随时可预览</span></div><div id="uploadedList" class="list"></div><div id="uploadPager" class="pagination"></div></div>
   </section>
@@ -69,7 +69,24 @@
 </main>
 <dialog id="createDialog" class="create-dialog"><div class="section-title"><h2>新建试卷</h2><button id="closeCreate" class="icon-button" aria-label="关闭新建窗口">×</button></div><p class="muted">同一份试卷的答案和评分标准将供所有答卷复用。</p><label>试卷名称<input id="title" placeholder="例如：九年级上册 · 第一次单元测验" maxlength="200"></label><div class="card-footer"><button id="create">创建试卷 →</button></div></dialog>
 <dialog id="preview" class="preview-dialog"><div class="section-title"><h2>答卷与资料预览</h2><button id="closePreview" class="secondary">关闭预览</button></div><iframe id="previewFrame" title="文件预览"></iframe></dialog>
-<dialog id="regionDialog" class="optimization-dialog"><div class="toolbar"><h2>答题区域模板</h2><button id="closeRegions" class="secondary">关闭</button></div><p>每套试卷首次框选一次。支持 Word、PDF 和图片原卷；Word 首次在本机转换以保留分页。学生答卷适用于同版扫描件或正面拍摄。修改影响后续识别，已保存的可靠作答保留。</p><div class="toolbar"><label>资料<select id="regionDocument"></select></label><label>页码<input id="regionPage" type="number" min="1" value="1"></label><label>题号<select id="regionQuestion"></select></label><button id="loadRegionPage">加载页面</button><label>框选方式<select id="regionMode"><option value="drag">按住鼠标拖动</option><option value="corners">两点框选（依次点击两个对角）</option></select></label></div><p class="region-guidance"><strong>框选对象：原试卷上的学生作答位置，不是标准答案内容。</strong>学生需要直接在同版试卷上作答；另纸作答或仅答案列表不要套用原卷区域。每个题号单独保存一个区域，一套模板可复用于全班；不按题型统一框选。</p><p id="regionStatus" role="alert" aria-live="assertive"></p><button id="regionPrepare" class="secondary" type="button">返回准备试卷与题目</button><canvas id="regionCanvas" aria-label="拖动框选作答区域"></canvas><div class="toolbar"><button id="previewRegion" class="secondary">预览裁切</button><button id="saveRegion">保存该题区域</button><button id="removeRegion" class="secondary">移除该题区域</button></div><img id="regionCrop" alt="选中区域裁切预览" hidden></dialog>
+<dialog id="regionDialog" class="optimization-dialog region-editor">
+  <header class="region-header"><div><span class="region-eyebrow">ANSWER REGIONS</span><h2>作答区域工作台</h2><p>先框选，再选择题号保存。同版答卷复用一次配置。</p></div><button id="closeRegions" class="secondary">关闭</button></header>
+  <div class="region-auto-note"><strong>选择题 · 自动识别，无需框选</strong><span>上传答卷后，由已配置的视觉模型定位题号与填涂选项，再按评分规则判分；识别会消耗模型用量。</span></div>
+  <div class="region-controls"><label>原卷资料<select id="regionDocument"></select></label><label class="region-page-field">页码<input id="regionPage" type="number" min="1" value="1"></label><label>查看已存区域<select id="regionQuestion"></select></label><label>框选方式<select id="regionMode"><option value="drag">按住鼠标拖动</option><option value="corners">两点框选</option></select></label><button id="loadRegionPage">加载页面</button></div>
+  <p class="region-guidance">仅为需要局部 OCR 的非选择题设置区域。在原试卷或空白答题卡上，框住学生实际填写答案的位置。</p>
+  <p id="regionStatus" role="status" aria-live="polite"></p>
+  <div class="region-tools"><button id="regionPrepare" class="secondary" type="button">返回准备试卷与题目</button><button id="removeRegion" class="secondary">移除当前题区域</button></div>
+  <div class="region-page-surface"><canvas id="regionCanvas" aria-label="拖动或点击两个对角框选作答区域"></canvas></div>
+  <section id="regionActions" class="region-selection-card" role="region" aria-label="保存选中区域" hidden>
+    <div class="region-card-title"><div><span class="region-eyebrow">REGION SELECTED</span><h3>保存这个作答区域？</h3></div><button id="cancelRegion" class="region-dismiss" aria-label="取消本次框选">×</button></div>
+    <p id="regionSelectionInfo" class="muted"></p>
+    <label for="regionSaveQuestion">保存到题号</label><select id="regionSaveQuestion"></select>
+    <p id="regionSaveHint" class="muted"></p>
+    <img id="regionCrop" alt="选中区域裁切预览" hidden>
+    <p id="regionActionStatus" role="status" aria-live="polite"></p>
+    <div class="region-card-actions"><button id="previewRegion" class="secondary">预览裁切</button><button id="saveRegion">保存区域</button></div>
+  </section>
+</dialog>
 <dialog id="trainingDialog" class="optimization-dialog"><h2>批准训练样本</h2><p>请删除姓名和联系方式等身份信息。批准脱敏文本不代表确认机器评分；必须先保存人工复核，才能导出教师确认标签。</p><label>脱敏作答<textarea id="trainingText" rows="8"></textarea></label><label>批准人<input id="trainingApprover" maxlength="100"></label><label class="inline"><input id="trainingConsent" type="checkbox">我已检查脱敏文本，并批准用于训练数据导出</label><div class="toolbar"><button id="approveTraining">批准</button><button id="closeTraining" class="secondary">取消</button></div></dialog>
-<script src="/static/chart.umd.min.js"></script><script src="/static/app.js?v=20261021-region-input-v4"></script>
+<script src="/static/chart.umd.min.js"></script><script src="/static/app.js?v=20261021-region-save-v5"></script>
 </body></html>
