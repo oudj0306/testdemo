@@ -70,7 +70,7 @@ async function loadAssessment(){
  selected=null;current=null;activeLayout=null;pg('review').page=1;$('submissionBody').textContent='选择答卷查看详情。';$('studentTitle').textContent='选择一份答卷';$('reportBody').textContent='点击生成报告以读取最新成绩。';$('downloadReport').removeAttribute('href');
  if(!$('assessment').value)return;
  const [a,docs]=await Promise.all([api('/api/assessments/'+id),api('/api/assessments/'+id+'/documents')]);if(request!==assessmentRequest||$('assessment').value!==id)return;current=a;$('assessmentState').textContent=a.status==='published'?'已发布':'草稿';$('assessmentState').className='badge '+(a.status==='published'?'':'neutral');
- $('documents').innerHTML=docs.length?docs.map(d=>'<button data-doc="'+d.id+'">'+esc(({question_paper:'原试卷',answer_sheet:'空白答题卡模板',answer_key:'答案册',rubric:'评分标准',reference:'参考资料'})[d.kind])+' · '+esc(d.media_type.includes('word')?'Word':d.media_type.split('/')[1])+'　查看原件</button>').join(''):'<p class="muted">还没有资料，请上传原试卷。</p>';
+ $('documents').innerHTML=docs.length?docs.map(d=>'<button data-doc="'+d.id+'">'+esc(({question_paper:'原试卷',answer_sheet:'答题卡模板／已填样张',answer_key:'答案册',rubric:'评分标准',reference:'参考资料'})[d.kind])+' · '+esc(d.media_type.includes('word')?'Word':d.media_type.split('/')[1])+'　查看原件</button>').join(''):'<p class="muted">还没有资料，请上传原试卷。</p>';
  document.querySelectorAll('[data-doc]').forEach(b=>b.onclick=()=>showPreview('document',b.dataset.doc));
  await loadLayoutStatus(docs);
  $('questions').innerHTML=a.questions.length?a.questions.map(q=>'<details class="question" open><summary>'+esc(layoutQuestionLabel(q))+' · '+q.max_score+' 分 <span class="badge">'+(q.answer_key_state==='missing'?'未配置答案':q.answer_key_state==='candidate'?'待确认':'已确认')+'</span></summary><p>'+esc(q.prompt)+'</p><h3>参考答案</h3><pre>'+esc(typeof q.answer_key==='string'?q.answer_key:JSON.stringify(q.answer_key))+'</pre><h3>评分细则</h3>'+q.rubric.map(r=>'<p>'+esc(r.criterion)+' <b>'+esc(r.score)+' 分</b></p>').join('')+(q.rubric.length?'':'<p class="muted">根据标准答案及题目规则评分。</p>')+'</details>').join(''):'<p class="empty">先上传原试卷并识别题目；参考答案在独立步骤配置。</p>';
@@ -324,12 +324,12 @@ function savedQuestionRegion(q){if(!q)return null;return q.rule_config?.region||
 let regionImage=null, regionSelection=null, regionStart=null, regionDocumentId=null, regionLoadedPage=null, regionPreviewUrl=null, regionSaved=false,regionClickStart=null,regionPageRequest=0;
 function setupRegionEditor(docs){
  const supported=docs.filter(d=>d.kind==='answer_sheet'&&(d.media_type==='application/pdf'||d.media_type.startsWith('image/')||d.media_type==='application/msword'||d.media_type==='application/vnd.openxmlformats-officedocument.wordprocessingml.document'));
- $('regionDocument').innerHTML=supported.map((d,i)=>'<option value="'+esc(d.id)+'">空白答题卡 · 第 '+(i+1)+' 份资料</option>').join('');
+ $('regionDocument').innerHTML=supported.map((d,i)=>'<option value="'+esc(d.id)+'">答题卡 · 第 '+(i+1)+' 份资料</option>').join('');
  $('regionQuestion').innerHTML=editableRegionQuestions().map(q=>'<option value="'+esc(q.id)+'">'+esc(layoutQuestionLabel(q))+(q.rule_config?.region?' · 已配置':'')+'</option>').join('');
  if(activeLayout?.document_id&&supported.some(d=>d.id===activeLayout.document_id))$('regionDocument').value=activeLayout.document_id;
  $('regionSaveQuestion').innerHTML=$('regionQuestion').innerHTML;
  if($('regionDialog').open){$('regionQuestion').disabled=!editableRegionQuestions().length;$('removeRegion').disabled=!editableRegionQuestions().length;refreshRegionSaveButton();}
- $('editRegions').disabled=false;$('editRegions').title=!supported.length?'请先上传空白答题卡模板':!current.questions.length?'请先识别或录入题目':'支持图片、PDF 和 Word 答题卡';
+ $('editRegions').disabled=false;$('editRegions').title=!supported.length?'请先上传答题卡模板／已填样张':!current.questions.length?'请先识别或录入题目':'支持图片、PDF 和 Word 答题卡';
 }
 function drawRegion(){
  const canvas=$('regionCanvas'),ctx=canvas.getContext('2d');if(!regionImage)return;
@@ -346,10 +346,10 @@ function openRegionEditor(){
  regionPageRequest++;regionSaved=false;regionImage=null;regionLoadedPage=null;regionSelection=null;regionStart=null;regionClickStart=null;$('regionActions').hidden=true;
  $('regionCanvas').width=0;$('regionCrop').hidden=true;
  const canRender=!!current&&$('regionDocument').options.length>0,hasQuestions=editableRegionQuestions().length>0;
- const problem=!current?'请先新建或选择试卷。':!canRender?'请先上传类型为“空白答题卡模板”的 Word、PDF 或图片。':!hasQuestions?(current?.questions?.length?'本卷选择题自动识别，无需设置区域。':'可先预览答题卡；从原试卷识别题目后，为对应题号保存答题区域，不生成参考答案。'):'';
+ const problem=!current?'请先新建或选择试卷。':!canRender?'请先上传类型为“答题卡模板／已填样张”的 Word、PDF 或图片。':!hasQuestions?(current?.questions?.length?'本卷选择题自动识别，无需设置区域。':'可先预览答题卡；从原试卷识别题目后，为对应题号保存答题区域，不生成参考答案。'):'';
  for(const id of ['loadRegionPage','regionDocument','regionPage','regionMode','regionScale','previewRegion'])$(id).disabled=!canRender;
  for(const id of ['regionQuestion','saveRegion','removeRegion'])$(id).disabled=!canRender||!hasQuestions;
- $('regionStatus').textContent=problem||'在空白答题卡上框选学生将填写答案的位置，松开后选择题号保存。';
+ $('regionStatus').textContent=problem||'在答题卡上框选学生将填写答案的位置，松开后选择题号保存。';
  $('regionStatus').className=problem?'region-guidance':'region-guidance ready';
  if(!$('regionDialog').open)$('regionDialog').showModal();
  if(canRender){$('regionPage').value=String(savedQuestionRegion(current.questions?.find(q=>q.id===$('regionQuestion').value))?.page||1);$('loadRegionPage').click();}
@@ -448,7 +448,7 @@ function layoutQuestionLabel(q){
 async function loadLayoutStatus(docs){
  const id=aid(),state=await api('/api/assessments/'+id+'/layout-template');if(current?.id!==id)return;
  activeLayout=state;
- if(docs)$('layoutDocument').innerHTML=docs.filter(d=>d.kind==='answer_sheet').map((d,i)=>'<option value="'+esc(d.id)+'">空白答题卡 · '+(i+1)+'</option>').join('');
+ if(docs)$('layoutDocument').innerHTML=docs.filter(d=>d.kind==='answer_sheet').map((d,i)=>'<option value="'+esc(d.id)+'">答题卡 · '+(i+1)+'</option>').join('');
  if(state.document_id)$('layoutDocument').value=state.document_id;
  $('layoutBadge').textContent=state.enabled?(state.stale?'模板待更新':'本地识别已启用'):state.exists?'已停用':'尚未配置';
  $('layoutBadge').className='badge '+(state.enabled&&!state.stale?'':'neutral');
@@ -456,17 +456,18 @@ async function loadLayoutStatus(docs){
  $('previewLayout').disabled=!state.exists;$('toggleLayout').disabled=!state.exists;
  $('toggleLayout').textContent=state.enabled?'停用并恢复原识别路径':'启用本地模板';
  const deps=state.local_dependencies||{},missing=Object.entries(deps).filter(([_,v])=>!v).map(([k])=>k);
- $('layoutState').textContent=!current?.questions?.length?'先上传原试卷和空白答题卡模板。尚无题目时先提取题目结构，再匹配答题卡位置，两步模型请求均不生成参考答案。':state.enabled?(state.stale?'题目或来源已变更：请勾选重新生成；未更新前保留识别缺失，不回退视觉 API。':'模板已启用：'+state.items.length+' 道题，'+state.page_count+' 页。学生答卷仅本地识别；未定位或识别不确定的题保留缺分。'):'请先预览来源，确认未作答且一张纸对应一页。首次解析使用模型；启用后学生答卷不自动调用视觉 API。';
+ $('layoutState').textContent=!current?.questions?.length?'先上传原试卷和答题卡模板／已填样张。尚无题目时先提取题目结构，再匹配答题卡位置，两步模型请求均不生成参考答案。':state.enabled?(state.stale?'题目或来源已变更：请勾选重新生成；未更新前保留识别缺失，不回退视觉 API。':'模板已启用：'+state.items.length+' 道题，'+state.page_count+' 页。学生答卷仅本地识别；未定位或识别不确定的题保留缺分。'):'请先预览来源，支持空白卡或已填样张；拼图需保持同样版式。首次解析使用模型；启用后学生答卷不自动调用视觉 API。';
  if(missing.length)$('layoutState').textContent+=' 当前服务缺少 '+missing.join(' / ')+'，请用优化版 GPU 环境启动。';
  if(state.warnings?.length)$('layoutState').textContent+=' '+state.warnings.join('；');
- const failed=state.last_attempt;if(failed?.status==='rejected'&&failed.document_id===$('layoutDocument').value){$('layoutState').textContent+=' 上次检查：'+failed.error;if(!state.enabled)$('layoutBadge').textContent='来源待检查';}
+ const failed=state.last_attempt;if(failed?.version==='local-layout-v3'&&failed?.status==='rejected'&&failed.document_id===$('layoutDocument').value){$('layoutState').textContent+=' 上次检查：'+failed.error;if(!state.enabled)$('layoutBadge').textContent='来源待检查';}
  $('layoutQuestions').innerHTML=(state.items||[]).map(item=>{const q=current.questions.find(q=>q.id===item.question_id);return q?'<span class="layout-question-chip"><b>'+esc(item.section||'未分组')+'</b> / '+esc(item.number||q.question_no)+' · '+(item.method==='omr'?'填涂检测':'文字 OCR')+(item.confidence<.9?' · 待核对':'')+'</span>':'';}).join('');
 }
 function updateLayoutEntry(){
  const button=$('generateLayout');button.disabled=layoutBusy;
  if(layoutBusy)$('layoutBadge').textContent='正在检查并定位…';
+ else if($('layoutBadge').textContent==='正在检查并定位…')$('layoutBadge').textContent=activeLayout?.enabled?(activeLayout.stale?'模板待更新':'本地识别已启用'):activeLayout?.exists?'已停用':'尚未配置';
  button.textContent=layoutBusy?'正在处理…':!current?.questions?.length?'识别题目并匹配答题卡':'匹配答题卡并启用模板';
- button.title=!current?'请先新建或选择试卷':!$('layoutDocument').options.length?'请先上传空白答题卡模板':!current.questions.length?'先提取原试卷题目结构，再定位答题卡；两步模型请求，不生成答案':'首次请求模型生成位置；有效模板直接复用';
+ button.title=!current?'请先新建或选择试卷':!$('layoutDocument').options.length?'请先上传答题卡模板／已填样张':!current.questions.length?'先提取原试卷题目结构，再定位答题卡；两步模型请求，不生成答案':'首次请求模型生成位置；有效模板直接复用';
 }
 async function ensureAssessmentQuestions(assessmentId){
  if(current?.id!==assessmentId)throw Error('试卷已切换，请重新操作');
@@ -484,7 +485,7 @@ async function ensureAssessmentQuestions(assessmentId){
 action('generateLayout',async()=>{
  const id=current?.id,documentId=$('layoutDocument').value,force=$('forceLayout').checked;
  if(!id){$('layoutState').textContent='请先新建或选择试卷，再上传原卷。';throw Error($('layoutState').textContent);}
- if(!documentId){$('layoutState').textContent='请按“空白答题卡模板”类型上传未作答的答题卡，再选择模板来源。';throw Error($('layoutState').textContent);}
+ if(!documentId){$('layoutState').textContent='请按“答题卡模板／已填样张”类型上传答题卡，再选择模板来源。';throw Error($('layoutState').textContent);}
  layoutBusy=true;updateLayoutEntry();
  try{
   if(!current.questions.length){$('layoutState').textContent='第 1/2 步：正在提取原试卷题目结构，不生成答案…';await ensureAssessmentQuestions(id);}
@@ -497,13 +498,13 @@ action('generateLayout',async()=>{
 });
 action('toggleLayout',async()=>{await api('/api/assessments/'+aid()+'/layout-template',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled:!activeLayout.enabled})});await loadLayoutStatus();});
 let layoutPreviewSource=false;
-$('previewLayoutSource').onclick=()=>{if(!$('layoutDocument').value){notice('请先上传并选择空白答题卡模板。',true);return;}layoutPreviewSource=true;$('layoutPreviewPage').value='1';$('layoutPreviewDialog').showModal();$('loadLayoutPreview').click();};
+$('previewLayoutSource').onclick=()=>{if(!$('layoutDocument').value){notice('请先上传并选择答题卡模板／已填样张。',true);return;}layoutPreviewSource=true;$('layoutPreviewPage').value='1';$('layoutPreviewDialog').showModal();$('loadLayoutPreview').click();};
 $('previewLayout').onclick=()=>{layoutPreviewSource=false;$('layoutPreviewPage').value='1';$('layoutPreviewDialog').showModal();$('loadLayoutPreview').click();};
 $('closeLayoutPreview').onclick=()=>{$('layoutPreviewDialog').close();};
 action('loadLayoutPreview',async()=>{
  const page=Number($('layoutPreviewPage').value);if(!Number.isInteger(page)||page<1)throw Error('请输入有效页码');
  $('layoutPreviewTitle').textContent=layoutPreviewSource?'来源答题卡 · 输入检查':'自动模板 · 位置核对';
- $('layoutPreviewHint').textContent=layoutPreviewSource?'确认图片未填写答案，一张纸对应一页；这里仅预览，不调用模型。':'蓝框为文字区域，绿框为填涂位置。请核对题号与实际位置。';
+ $('layoutPreviewHint').textContent=layoutPreviewSource?'已填样张只提供位置，不提供标准答案；拼图按整张定位；这里仅预览，不调用模型。':'蓝框为文字区域，绿框为填涂位置。请核对题号与实际位置。';
  $('layoutPreviewImage').alt=layoutPreviewSource?'上传的来源答题卡原图':'自动模板区域标注预览';
  $('layoutPreviewStatus').textContent=layoutPreviewSource?'正在加载来源图片…':'正在加载标注页…';
  const response=await fetch('/api/assessments/'+aid()+(layoutPreviewSource?'/template-page?document_id='+encodeURIComponent($('layoutDocument').value)+'&page=':'/layout-template/page?page=')+page);

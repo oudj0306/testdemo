@@ -1,6 +1,17 @@
 param([int]$Port = 8001, [switch]$InitDbOnly, [switch]$CheckOcr, [switch]$PrintRuntime, [string]$PythonExe = '')
 $ErrorActionPreference = 'Stop'
 $projectPath = $PSScriptRoot
+# Reusing the running workspace avoids an accidental second server on the same port.
+if (-not ($InitDbOnly -or $CheckOcr -or $PrintRuntime)) {
+    try {
+        $taskHealth = Invoke-RestMethod -Uri "http://127.0.0.1:$Port/api/health" -TimeoutSec 2
+        if ($taskHealth.status -eq 'ok' -and $null -ne $taskHealth.ocr_runtime -and $null -ne $taskHealth.grading_profile) {
+            Write-Host "Optimization service is already running: http://127.0.0.1:$Port/"
+            Write-Host 'Open that URL. To restart after a code update, stop the existing service first.'
+            return
+        }
+    } catch { }
+}
 $roots = @($projectPath)
 $ancestor = Split-Path $projectPath -Parent
 for ($level = 0; $level -lt 4 -and $ancestor; $level++) {

@@ -398,9 +398,9 @@ def test_template_request_limits_page_numbers_and_defines_box_size(workspace,mon
     def request(req,*args):
         payload=json.loads(req.data)
         schema=payload['text']['format']['schema']
-        assert schema['$defs']['Box']['properties']['page']['maximum']==1
+        assert schema['$defs']['GroundingBox']['properties']['page']['maximum']==1
         instruction=payload['input'][0]['content'][0]['text']
-        assert '不是右下角坐标' in instruction and 'width<=1-x' in instruction
+        assert 'x1,y1' in instruction and 'x2,y2' in instruction and '0到1000' in instruction
         captured.append(True)
         return previous(req,*args)
     monkeypatch.setattr(templates,'request_json',request)
@@ -409,9 +409,7 @@ def test_template_request_limits_page_numbers_and_defines_box_size(workspace,mon
 
 
 @pytest.mark.parametrize('review,expected',[
-    ({'answer_content':'filled','composite_scan':False,'reason':'Filled bubbles'},'未作答'),
-    ({'answer_content':'uncertain','composite_scan':False,'reason':'Illegible'},'无法确认'),
-    ({'answer_content':'blank','composite_scan':True,'reason':'Two physical sheets'},'拼图'),
+    ({'answer_content':'uncertain','composite_scan':False,'reason':'Illegible'},'无法可靠判断'),
 ])
 def test_source_rejected_before_geometry_and_never_activated(workspace,monkeypatch,review,expected):
     client,a,qs,doc,source,calls=workspace
@@ -431,3 +429,54 @@ def test_source_rejected_before_geometry_and_never_activated(workspace,monkeypat
     monkeypatch.setattr(templates,'request_json',lambda *args:pytest.fail('Rejected source must not be charged again'))
     cached=client.post(f"/api/assessments/{a['id']}/layout-template",json={'document_id':doc['id']})
     assert cached.status_code==422 and '未重复请求 API' in cached.json()['detail']
+
+
+@pytest.mark.parametrize('same',[False,True])
+def test_filled_reference_never_subtracts_sample_answer(same):
+    import numpy as np
+    ref=mark(blank_sheet(),'A')
+    answer=mark(blank_sheet(),'A' if same else 'B')
+    text,confidence,blank,_=local.read_marks(draft()['items'][0],{1:np.asarray(answer)},{1:ref},{1:{}},reference_mode='geometry')
+    assert text==('A' if same else 'B') and confidence and not blank
+
+
+def test_filled_composite_source_is_supported(workspace,monkeypatch):
+    client,a,qs,doc,source,calls=workspace
+    result=draft(qs[0]['id'],qs[1]['id'])
+    result['source_review']={'answer_content':'filled','composite_scan':True,'reason':'Filled sample collage'}
+    monkeypatch.setattr(templates,'request_json',lambda *args:({'output_text':json.dumps(result),'usage':{}},'synthetic-filled'))
+    response=client.post(f"/api/assessments/{a['id']}/layout-template",json={'document_id':doc['id']})
+    assert response.status_code==200,response.text
+    assert response.json()['enabled'] and response.json()['omr_reference_mode']=='geometry'
+    assert any('拼图' in warning for warning in response.json()['warnings'])
+
+
+@pytest.mark.parametrize('case',['faint','multi'])
+def test_geometry_omr_preserves_uncertain_marks(case):
+    import numpy as np
+    ref=mark(blank_sheet(),'A')
+    answer=mark(blank_sheet(),'B',partial=case=='faint')
+    if case=='multi':answer=mark(answer,'C')
+    text,confidence,blank,_=local.read_marks(draft()['items'][0],{1:np.asarray(answer)},{1:ref},{1:{}},reference_mode='geometry')
+    assert text=='' and confidence is None and not blank
+
+
+
+def test_integer_corners_convert_and_bad_question_is_isolated():
+    value=draft()
+    value['items'][1]['regions']=[dict(page=1,x1=100,y1=500,x2=800,y2=620)]
+    questions=[{'id':'choice','question_no':'一-1','scoring_mode':'choice_set'},
+               {'id':'text','question_no':'二-1','scoring_mode':'numeric'}]
+    result=templates.decode_model_layout(value,questions,1)
+    assert result['items'][1]['regions'][0]['width']==.7
+    value['items'][1]['regions'][0]['x2']=50
+    result=templates.decode_model_layout(value,questions,1)
+    assert len(result['items'])==1 and any('二-1' in w for w in result['warnings'])
+
+
+
+def test_filled_reference_cannot_confirm_blank_from_no_marks():
+    import numpy as np
+    ref=mark(blank_sheet(),'A')
+    text,confidence,blank,_=local.read_marks(draft()['items'][0],{1:np.asarray(blank_sheet())},{1:ref},{1:{}},reference_mode='geometry')
+    assert not text and confidence is None and not blank

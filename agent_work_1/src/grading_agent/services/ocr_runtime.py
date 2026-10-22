@@ -2,6 +2,7 @@
 import importlib.util
 import json
 import os
+import re
 import sys
 from pathlib import Path
 from threading import RLock
@@ -26,7 +27,7 @@ def runtime_status():
     }
 
 
-def recognize(path, device='auto', retry_initialization=False):
+def recognize(path, device='auto', retry_initialization=False, leading_number=False):
     global _active_device, _compatibility_warning
     with _lock:
         try:
@@ -69,8 +70,13 @@ def recognize(path, device='auto', retry_initialization=False):
                 rec_texts, rec_scores = data.get('rec_texts', []), data.get('rec_scores', [])
                 for index, text in enumerate(rec_texts):
                     if str(text).strip():
+                        if leading_number and not re.match(r'^\s*\d{1,2}(?!\d)', str(text)):
+                            continue
                         texts.append(str(text))
                         scores.append(float(rec_scores[index]) if index < len(rec_scores) else 0.0)
+            if leading_number and texts:
+                best=max(range(len(scores)),key=lambda i:scores[i])
+                texts,scores=[texts[best]],[scores[best]]
             _active_device = selected
             _errors.pop(device, None)
             # A strong line must not hide an unreadable line by averaging scores.

@@ -34,18 +34,18 @@
   <div id="listTools" class="list-tools" hidden><label class="search-field"><span aria-hidden="true">⌕</span><input id="studentSearch" type="search" placeholder="查找学生 / 文件名" aria-label="查找学生或文件名"></label><label class="sort-label">排列方式<select id="sortMode"><option value="time_desc">最新上传</option><option value="time_asc">最早上传</option><option value="name_asc">姓名升序</option><option value="name_desc">姓名降序</option></select></label></div>
   <section id="paper" class="tab">
     <div class="paper-grid">
-      <div class="card materials-card"><div class="section-title"><div><span class="section-kicker">SOURCE FILES</span><h2>1. 原试卷与空白答题卡</h2></div><span class="count-label">01</span></div><p class="muted">原试卷提供题目内容，空白答题卡提供作答版式，请分别选择资料类型上传。已有答案和评分标准也可独立上传。</p>
-        <label class="field-label">资料类型<select id="kind"><option value="question_paper">原试卷（题目内容）</option><option value="answer_sheet">空白答题卡模板（作答位置）</option><option value="answer_key">标准答案</option><option value="rubric">评分标准</option><option value="reference">参考资料</option></select></label>
+      <div class="card materials-card"><div class="section-title"><div><span class="section-kicker">SOURCE FILES</span><h2>1. 原试卷与答题卡</h2></div><span class="count-label">01</span></div><p class="muted">原试卷提供题目内容，答题卡提供作答版式，请分别选择资料类型上传。已有答案和评分标准也可独立上传。</p>
+        <label class="field-label">资料类型<select id="kind"><option value="question_paper">原试卷（题目内容）</option><option value="answer_sheet">答题卡模板／已填样张（作答位置）</option><option value="answer_key">标准答案</option><option value="rubric">评分标准</option><option value="reference">参考资料</option></select></label>
         <label class="file-zone small-zone"><span class="file-icon" aria-hidden="true">＋</span><strong>选择试卷资料</strong><span>支持多选，每个文件不超过 25 MB</span><input id="paperFiles" type="file" multiple accept=".doc,.docx,.pdf,.jpg,.jpeg,.png,.webp"><small id="paperFileHint">尚未选择文件</small></label>
         <button id="uploadPaper" class="full-width">保存资料</button><button id="extractQuestions" class="secondary full-width">识别原试卷题目（不生成答案）</button><div id="documents" class="list document-list"></div>
         <div class="helper-note">识别题目仅提取结构，不生成答案。原卷与答题卡为同一份文件时，也请分别按两种资料类型登记。</div>
       </div>
     <div class="card local-layout-card">
       <div class="section-title"><div><span class="section-kicker">SET UP ONCE · READ LOCALLY</span><h2>2. 匹配答题卡作答位置</h2></div><span id="layoutBadge" class="badge neutral">尚未配置</span></div>
-      <p class="muted">用原试卷提取的题目清单匹配空白答题卡的作答区与填涂位置，不生成参考答案。后续上传学生填写的同版答题卡，本地对齐并识别，固定答案按规则评分，主观题再调用文本评分模型。</p>
+      <p class="muted">用原试卷提取的题目清单匹配答题卡的作答区与填涂位置，不生成参考答案。后续上传学生填写的同版答题卡，本地对齐并识别，固定答案按规则评分，主观题再调用文本评分模型。</p>
       <div class="toolbar"><label>模板来源<select id="layoutDocument"></select></label><button id="previewLayoutSource" class="secondary">预览来源答题卡</button><button id="generateLayout">匹配答题卡并启用模板</button><button id="previewLayout" class="secondary" disabled>预览自动区域</button><button id="toggleLayout" class="secondary" disabled>停用本地模板</button></div>
       <label class="inline small"><input id="forceLayout" type="checkbox">重新请求模型生成（替换已有模板，会产生用量；不勾选则复用有效模板）</label>
-      <p id="layoutState" class="helper-note" role="status" aria-live="polite">必须使用同版未作答答题卡；一张纸对应一页，多张纸请逐页扫描为 PDF，不要上传已填答卷或拼图。题号来自原试卷，参考答案独立配置。</p>
+      <p id="layoutState" class="helper-note" role="status" aria-live="polite">支持同版空白卡或已填样张。拼图按整张定位，后续答卷需保持相同拼接方式。题号来自原试卷，参考答案独立配置。</p>
       <div class="toolbar"><button id="editRegions" class="secondary">修正答题卡区域（手工框选）</button></div><div id="layoutQuestions" class="layout-question-groups"></div>
     </div>
       <div class="card standards-card"><div class="section-title"><div><span class="section-kicker">ANSWER STANDARD</span><h2>3. 参考答案与评分标准</h2></div><span class="count-label">03</span></div><div class="toolbar"><button id="generate">生成／读取参考答案</button><button id="fillMissing" class="secondary">补全缺失项</button></div><p class="helper-note">此步骤独立于答题卡定位。读取已上传的教师答案，或生成缺失答案，均需核对后确认；不会改动位置模板。</p><div id="questions"></div><div class="card-footer"><button id="confirm" class="secondary">确认答案与标准</button><button id="publish">发布试卷 →</button></div></div>
@@ -81,7 +81,7 @@
   <header class="region-header"><div><span class="region-eyebrow">ANSWER REGIONS</span><h2>作答区域工作台</h2><p>先框选，再选择题号保存。同版答卷复用一次配置。</p></div><button id="closeRegions" class="secondary">关闭</button></header>
   <div class="region-auto-note"><strong>选择题 · 自动识别，无需框选</strong><span>先生成自动位置模板，再由本地填涂检测或 OCR 读取答案；此处只用于纠正非选择题的位置。</span></div>
   <div class="region-controls"><label>答题卡模板<select id="regionDocument"></select></label><label class="region-page-field">页码<input id="regionPage" type="number" min="1" value="1"></label><label>查看已存区域<select id="regionQuestion"></select></label><label>显示比例<select id="regionScale"><option value="page">整页适应</option><option value="width">按宽度查看</option></select></label><label>框选方式<select id="regionMode"><option value="drag">按住鼠标拖动</option><option value="corners">两点框选</option></select></label><button id="loadRegionPage">加载页面</button></div>
-  <p class="region-guidance">仅为需要局部 OCR 的非选择题设置区域。只在空白答题卡模板上框住学生实际填写答案的位置，不在原试卷上框选。</p>
+  <p class="region-guidance">仅为需要局部 OCR 的非选择题设置区域。只在答题卡模板／已填样张上框住学生实际填写答案的位置，不在原试卷上框选。</p>
   <p id="regionStatus" role="status" aria-live="polite"></p>
   <div class="region-tools"><button id="regionPrepare" class="secondary" type="button">返回准备试卷与题目</button><button id="removeRegion" class="secondary">移除当前题区域</button></div>
   <div id="regionSurface" class="region-page-surface"><canvas id="regionCanvas" aria-label="拖动或点击两个对角框选作答区域"></canvas></div>
@@ -97,5 +97,5 @@
 </dialog>
 <dialog id="layoutPreviewDialog" class="optimization-dialog"><div class="toolbar"><h2 id="layoutPreviewTitle">自动模板 · 位置核对</h2><button id="closeLayoutPreview" class="secondary">关闭</button></div><p id="layoutPreviewHint">蓝框：文字作答区域；绿框：选择题填涂区域及选项。首次请核对题号与实际位置，错误的文字区域可用框选纠正。</p><div class="toolbar"><label>模板页码<input id="layoutPreviewPage" type="number" min="1" value="1"></label><button id="loadLayoutPreview">查看该页</button></div><p id="layoutPreviewStatus" role="status"></p><img id="layoutPreviewImage" alt="自动模板区域标注预览" style="width:100%"></dialog>
 <dialog id="trainingDialog" class="optimization-dialog"><h2>批准训练样本</h2><p>请删除姓名和联系方式等身份信息。批准脱敏文本不代表确认机器评分；必须先保存人工复核，才能导出教师确认标签。</p><label>脱敏作答<textarea id="trainingText" rows="8"></textarea></label><label>批准人<input id="trainingApprover" maxlength="100"></label><label class="inline"><input id="trainingConsent" type="checkbox">我已检查脱敏文本，并批准用于训练数据导出</label><div class="toolbar"><button id="approveTraining">批准</button><button id="closeTraining" class="secondary">取消</button></div></dialog>
-<script src="/static/chart.umd.min.js"></script><script src="/static/app.js?v=20261022-answer-card-v9-ui12"></script>
+<script src="/static/chart.umd.min.js"></script><script src="/static/app.js?v=20261022-answer-card-v9-ui14"></script>
 </body></html>

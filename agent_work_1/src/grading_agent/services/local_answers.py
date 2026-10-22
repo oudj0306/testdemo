@@ -83,10 +83,11 @@ def covered(b, aligned, meta):
     return x1,y1,x2,y2
 
 
-def read_marks(item, aligned_pages, references, metadata, multiple=False, prepared=None):
+def read_marks(item, aligned_pages, references, metadata, multiple=False, prepared=None, reference_mode="blank_difference"):
     import cv2
     import numpy as np
     selected, measurements, uncertain = [], {}, False
+    geometry_ratios = []
     prepared = prepared if prepared is not None else {}
     for option in item['options']:
         b = option['box']
@@ -100,6 +101,19 @@ def read_marks(item, aligned_pages, references, metadata, multiple=False, prepar
         ref_gray,answer_gray,threshold = prepared[page]
         r = ref_gray[y1:y2,x1:x2]
         a = answer_gray[y1:y2,x1:x2]
+        if reference_mode == 'geometry':
+            # Filled samples supply positions only. Never subtract their answers.
+            hh,ww = a.shape
+            yy,xx = np.ogrid[:hh,:ww]
+            interior = ((xx-(ww-1)/2)/max(ww*.32,1))**2 + ((yy-(hh-1)/2)/max(hh*.32,1))**2 <= 1
+            if interior.sum()<15:
+                raise ValueError('选项区域分辨率不足，无法可靠检测填涂')
+            fill=float(((a<threshold)&interior).sum()/interior.sum())
+            measurements[option['label']]=round(fill,4)
+            geometry_ratios.append(fill)
+            if fill>=.65:selected.append(option['label'])
+            elif fill>.45:uncertain=True
+            continue
         # Compare added ink only, excluding the printed outline and local lighting.
         rmask = (r < min(190, float(np.percentile(r,95))-45)).astype('uint8')
         amask = (a < threshold).astype('uint8')
@@ -125,6 +139,13 @@ def read_marks(item, aligned_pages, references, metadata, multiple=False, prepar
             selected.append(option['label'])
         elif fill > .06:
             uncertain = True
+    if reference_mode=='geometry':
+        # Without a blank reference, faint/ambiguous marks cannot establish blankness.
+        if not selected:uncertain=True  # A filled reference cannot establish blankness safely.
+        if selected and any(.12<r<.65 for r in geometry_ratios):
+            clear=[r for r in geometry_ratios if r>=.65]
+            other=[r for r in geometry_ratios if r<.65]
+            if other and min(clear)-max(other)<.25:uncertain=True
     if uncertain or (not multiple and len(selected)>1):
         return '', None, False, measurements
     return ''.join(sorted(selected)), .97, not selected, measurements
@@ -177,7 +198,8 @@ def recognize_answers(layout, pages, questions, settings):
             if item['method']=='omr':
                 with timed('local_omr'):
                     text,confidence,blank,marks = read_marks(item, aligned, references, metadata,
-                                                            q['question_type']=='multiple_choice', prepared=prepared_marks)
+                                                            q['question_type']=='multiple_choice', prepared=prepared_marks,
+                                                            reference_mode=layout.get('omr_reference_mode','geometry' if (layout.get('source_review') or {}).get('answer_content')=='filled' else 'blank_difference'))
                 diagnostics['marks'][qid] = marks
                 source = 'local_layout_omr'
             else:

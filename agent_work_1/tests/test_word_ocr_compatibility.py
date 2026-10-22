@@ -141,7 +141,7 @@ const text=fs.readFileSync(process.argv[1],'utf8');
 const code=text.slice(text.indexOf('function openRegionEditor(){'),text.indexOf("$('closeRegions').onclick"));
 for(const [current,documents,expected,disabled] of [
  [null,0,'新建或选择',true],
- [{questions:[]},0,'空白答题卡模板',true],
+ [{questions:[]},0,'答题卡模板／已填样张',true],
  [{questions:[]},1,'可先预览',true],
  [{questions:[{id:'q',rule_config:{region:{page:2}}}]},1,'填写答案的位置',false]
 ]){

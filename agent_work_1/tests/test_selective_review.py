@@ -127,7 +127,9 @@ def test_manual_review_preserved_when_another_question_regraded():
         q1 = next(g for g in grades if g['question_no'] == '1')
         q2 = next(g for g in grades if g['question_no'] == '2')
         client.post(f"/api/grade-items/{q2['id']}/review", json={'final_score': 3, 'reviewer_ref': 't', 'reason': '人工检查'})
-        result = client.post(f"/api/submissions/{s['id']}/grade?pending_only=true").json()
+        response = client.post(f"/api/submissions/{s['id']}/grade?pending_only=true")
+        assert response.status_code == 200, response.text
+        result = response.json()
         assert next(g for g in result['grade_items'] if g['question_no'] == '1')['id'] == q1['id']
         preserved = next(g for g in result['grade_items'] if g['question_no'] == '2')
         assert preserved['id'] == q2['id']

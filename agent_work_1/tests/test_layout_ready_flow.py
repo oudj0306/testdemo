@@ -80,7 +80,7 @@ const block=source.slice(source.indexOf('function updateLayoutEntry(){'),source.
 async function scenario(existing=false,fail=false){
  const elements={},calls=[],handlers={};
  const $=id=>elements[id]??={value:'original-source',options:[{}],checked:false};
- const env={$,current:{id:'a',questions:existing?[{id:'q'}]:[]},layoutBusy:false,questionPreparation:null,
+ const env={$,current:{id:'a',questions:existing?[{id:'q'}]:[]},layoutBusy:false,questionPreparation:null,activeLayout:null,
   action:(id,f)=>handlers[id]=f,json:body=>({body}),notice(){},
   async api(url,options){calls.push([url,options]);if(fail)throw Error('synthetic configuration error');},
   async loadAssessment(){env.updateLayoutEntry();assert($('generateLayout').disabled);env.current.questions=[{id:'q'}];$('layoutDocument').value='changed-during-refresh';},
