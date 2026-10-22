@@ -83,22 +83,26 @@ def covered(b, aligned, meta):
     return x1,y1,x2,y2
 
 
-def read_marks(item, aligned_pages, references, metadata, multiple=False):
+def read_marks(item, aligned_pages, references, metadata, multiple=False, prepared=None):
     import cv2
     import numpy as np
     selected, measurements, uncertain = [], {}, False
+    prepared = prepared if prepared is not None else {}
     for option in item['options']:
         b = option['box']
         page = b['page']
         image = aligned_pages[page]
         x1,y1,x2,y2 = covered(b, image, metadata[page])
-        reference = np.asarray(references[page].convert('RGB'))[y1:y2,x1:x2]
-        answer = image[y1:y2,x1:x2]
-        r = cv2.cvtColor(reference,cv2.COLOR_RGB2GRAY)
-        a = cv2.cvtColor(answer,cv2.COLOR_RGB2GRAY)
+        if page not in prepared:
+            ref_gray = cv2.cvtColor(np.asarray(references[page].convert('RGB')),cv2.COLOR_RGB2GRAY)
+            answer_gray = cv2.cvtColor(image,cv2.COLOR_RGB2GRAY)
+            prepared[page] = (ref_gray,answer_gray,min(190,max(120,float(np.percentile(answer_gray,95))-45)))
+        ref_gray,answer_gray,threshold = prepared[page]
+        r = ref_gray[y1:y2,x1:x2]
+        a = answer_gray[y1:y2,x1:x2]
         # Compare added ink only, excluding the printed outline and local lighting.
         rmask = (r < min(190, float(np.percentile(r,95))-45)).astype('uint8')
-        amask = (a < min(190, max(120, float(np.percentile(image,95))-45))).astype('uint8')
+        amask = (a < threshold).astype('uint8')
         hh,ww = r.shape
         contours,_ = cv2.findContours(rmask,cv2.RETR_EXTERNAL,cv2.CHAIN_APPROX_SIMPLE)
         outlines=[]
@@ -133,6 +137,11 @@ def recognize_answers(layout, pages, questions, settings):
         return [], ['题目或模板来源已改变，请重新生成模板；本地模式不调用视觉 API'], diagnostics
     if not all(dependencies().values()):
         return [], ['当前 Python 缺少 OpenCV / NumPy，请使用优化版 GPU 环境或安装 local_recognition 依赖'], diagnostics
+    try:
+        import cv2
+        import numpy
+    except (ImportError,OSError):
+        return [], ['本地 OpenCV / NumPy 无法载入，请检查当前 Python 依赖'], diagnostics
     page_map = {p.page_no:p for p in pages}
     aligned, references, metadata = {}, {}, {}
     for spec in layout['pages']:
@@ -149,10 +158,11 @@ def recognize_answers(layout, pages, questions, settings):
             with Image.open(page_map[number].path) as image, timed('local_alignment', page=number):
                 aligned[number], metadata[number] = register_page(references[number],image)
             diagnostics['pages'][str(number)] = {k:v for k,v in metadata[number].items() if k!='coverage'}
-        except (ValueError, OSError) as exc:
+        except (ValueError, OSError, cv2.error) as exc:
             warnings.append(f'第 {number} 页：{exc}')
     by_id = {q['id']:q for q in questions}
     adapter = OCRAdapter(settings.ocr_provider, settings.ocr_device)
+    prepared_marks = {}
     for item in layout['items']:
         qid = item['question_id']
         if qid not in by_id:
@@ -167,7 +177,7 @@ def recognize_answers(layout, pages, questions, settings):
             if item['method']=='omr':
                 with timed('local_omr'):
                     text,confidence,blank,marks = read_marks(item, aligned, references, metadata,
-                                                            q['question_type']=='multiple_choice')
+                                                            q['question_type']=='multiple_choice', prepared=prepared_marks)
                 diagnostics['marks'][qid] = marks
                 source = 'local_layout_omr'
             else:
@@ -179,14 +189,14 @@ def recognize_answers(layout, pages, questions, settings):
                     Image.fromarray(image[y1:y2,x1:x2]).save(crop)
                     with timed('local_layout_ocr'):
                         t,c,_ = adapter.extract(crop)
-                    if not t.strip() or c is None or not math.isfinite(float(c)):
+                    if not t.strip() or c is None or not math.isfinite(float(c)) or not 0 <= float(c) <= 1:
                         raise ValueError('OCR 未可靠提取完整作答，不能认定为空白')
                     texts.append(t)
                     scores.append(float(c))
                 text,confidence,blank,source = '\n'.join(texts),min(scores),False,'local_layout_ocr'
                 if q['scoring_mode']=='choice_set':
                     normalized = re_choice(text)
-                    if normalized is None:
+                    if normalized is None or (q['question_type']=='single_choice' and len(normalized)!=1):
                         raise ValueError('未识别到明确的选项字母')
                     text = normalized
             if confidence is None or confidence < max(.9, settings.review_confidence_threshold):
@@ -194,7 +204,7 @@ def recognize_answers(layout, pages, questions, settings):
             output.append({'question_id':qid,'raw_text':text,'confidence':confidence,
                            'blank_confirmed':blank,'source':source})
             event('local_answer', details={'source':source})
-        except (ValueError, KeyError) as exc:
+        except (ValueError, KeyError, cv2.error) as exc:
             warnings.append(f"{q['question_no']}：{exc}")
     return output,warnings,diagnostics
 

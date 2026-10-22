@@ -129,14 +129,18 @@ def update_question(question_id: str, data: dict[str, Any]) -> dict[str, Any]:
             raise LookupError("题目不存在")
         old_region = decode_json(previous['rule_config'], {}).get('region') if previous else None
         new_region = data.get('rule_config', {}).get('region')
-        layout = connection.execute('SELECT payload FROM assessment_layouts WHERE assessment_id=?',
+        layout = connection.execute('SELECT payload,document_id FROM assessment_layouts WHERE assessment_id=?',
                                     (previous['assessment_id'],)).fetchone() if previous else None
-        if layout and new_region != old_region:
+        explicit_remove = 'region' in data.get('rule_config', {}) and new_region is None
+        if layout and (new_region != old_region or explicit_remove):
             from .schemas import RegionInput
             content = decode_json(layout['payload'], {})
             original_item = next((i for i in content['items'] if i['question_id']==question_id), {})
             content['items'] = [i for i in content['items'] if i['question_id'] != question_id]
             if new_region:
+                source_id = data.get('rule_config', {}).get('region_document_id')
+                if source_id and source_id != layout['document_id']:
+                    raise ValueError('纠错资料与自动模板来源不同，请选择模板对应原卷或空白答题卡')
                 b = RegionInput.model_validate(new_region).model_dump(exclude_none=True)
                 if b['page'] not in {p['page'] for p in content['pages']}:
                     raise ValueError('纠错区域页码不在自动模板中')

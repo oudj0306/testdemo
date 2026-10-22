@@ -148,7 +148,7 @@ for(const [current,documents,expected,disabled] of [
  const elements={};let loads=0;
  const $=id=>elements[id]??=( {options:id==='regionDocument'?Array(documents):[],value:'q',open:false,
  showModal(){this.open=true;},click(){loads++;},close(){this.open=false;},scrollIntoView(){},focus(){this.focused=true;}} );
- const context={current,$};vm.createContext(context);vm.runInContext(text.slice(text.indexOf('function editableRegionQuestions(){'),text.indexOf('// Region coordinates always')),context);vm.runInContext(code+';openRegionEditor();',context);
+ const context={current,$,regionPageRequest:0};vm.createContext(context);vm.runInContext(text.slice(text.indexOf('function editableRegionQuestions(){'),text.indexOf('// Region coordinates always')),context);vm.runInContext(code+';openRegionEditor();',context);
  assert($('regionDialog').open);assert($('regionStatus').textContent.includes(expected));
  assert.equal($('saveRegion').disabled,disabled);assert.equal(loads,current&&documents?1:0);
  if(!disabled)assert.equal($('regionPage').value,'2');
@@ -165,7 +165,7 @@ def test_home_disables_stale_html_cache():
     with TestClient(app) as client:
         response = client.get('/')
         assert response.headers['cache-control'] == 'no-store'
-        assert 'local-layout-v6' in response.text
+        assert 'layout-audit-v7' in response.text
 
 
 def test_region_pointer_modes_scale_and_work_before_questions():
@@ -219,3 +219,34 @@ assert.strictEqual(env.regionSelection,selection);assert($('regionSaveHint').tex
 assert.equal($('saveRegion').disabled,false);
 """
     subprocess.run([node, '-e', script, str(source)], check=True, capture_output=True, text=True)
+
+
+
+def test_slow_region_page_cannot_replace_newer_selection():
+    import shutil
+    node=shutil.which('node')
+    if not node:pytest.skip('Node runtime unavailable')
+    source=Path(__file__).resolve().parents[1]/'src/grading_agent/static/app.js'
+    script=r"""
+const fs=require('fs'),vm=require('vm'),assert=require('assert');
+const text=fs.readFileSync(process.argv[1],'utf8');
+const block=text.slice(text.indexOf("action('loadRegionPage',async()=>{"),text.indexOf('const regionCanvas='));
+const elements={},pending=[],handlers={};
+const $=id=>elements[id]??={value:id==='regionPage'?'1':'doc',open:true};
+const env={$,aid:()=> 'assessment',action:(id,f)=>handlers[id]=f,regionPageRequest:0,regionLoadedPage:null,
+ regionImage:null,regionSelection:null,selectSavedRegion(){},URL:{createObjectURL:b=>String(b.number),revokeObjectURL(){}},
+ Image:class{async decode(){this.naturalWidth=Number(this.src)*100;this.naturalHeight=200;}},
+ fetch:()=>new Promise(resolve=>pending.push(resolve))};
+vm.createContext(env);vm.runInContext(block,env);
+(async()=>{
+ const old=handlers.loadRegionPage();$('regionPage').value='2';const recent=handlers.loadRegionPage();
+ pending[1]({ok:true,blob:async()=>({number:2})});await recent;
+ assert.equal(env.regionLoadedPage,2);assert.equal($('regionCanvas').width,200);
+ pending[0]({ok:false,json:async()=>({detail:'obsolete error'})});await old;
+ assert.equal(env.regionLoadedPage,2);assert.equal($('regionCanvas').width,200);
+ const closed=handlers.loadRegionPage();$('regionDialog').open=false;
+ pending[2]({ok:true,blob:async()=>({number:3})});await closed;
+ assert.equal(env.regionLoadedPage,null);
+})().catch(e=>{console.error(e);process.exit(1)});
+"""
+    subprocess.run([node,'-e',script,str(source)],check=True,capture_output=True,text=True)

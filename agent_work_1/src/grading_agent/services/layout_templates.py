@@ -5,6 +5,7 @@ import io
 import json
 import re
 from pathlib import Path
+from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -57,7 +58,7 @@ def fingerprint(questions):
     return hashlib.sha256(encode_json(values).encode()).hexdigest()
 
 
-def layout_status(assessment):
+def layout_status(assessment, _include_pages=False):
     with transaction() as db:
         row = db.execute('SELECT * FROM assessment_layouts WHERE assessment_id=?', (assessment['id'],)).fetchone()
         document = db.execute('SELECT source_hash FROM assessment_documents WHERE id=?',
@@ -71,18 +72,24 @@ def layout_status(assessment):
     result['enabled'] = bool(row['enabled'])
     result['stale'] = (row['version'] != VERSION or row['question_fingerprint'] != fingerprint(assessment['questions'])
                        or not document or document['source_hash'] != row['source_hash'])
+    if not result['stale']:
+        try:
+            checked = validate_layout({'items':result.get('items',[])},assessment['questions'],len(result.get('pages',[])))
+            result['warnings'] = checked['warnings']
+        except ValueError as exc:
+            result['stale'] = True
+            result['warnings'] = ['已存模板校验失败：' + str(exc)]
     # Never expose local paths from template storage to the web UI.
-    result['page_count'] = len(result.pop('pages', []))
+    result['page_count'] = len(result.get('pages', []))
+    if not _include_pages:
+        result.pop('pages', None)
     return result
 
 
 def load_layout(assessment):
-    status = layout_status(assessment)
-    if not status['enabled']:
-        return None
-    with transaction() as db:
-        row = db.execute('SELECT payload FROM assessment_layouts WHERE assessment_id=?', (assessment['id'],)).fetchone()
-    return {**decode_json(row['payload'], {}), 'stale': status['stale'], 'version': VERSION}
+    # Read status and coordinates from one SQLite snapshot, never two versions.
+    state = layout_status(assessment, _include_pages=True)
+    return state if state['enabled'] else None
 
 
 def validate_layout(value, questions, page_count):
@@ -104,6 +111,16 @@ def validate_layout(value, questions, page_count):
             labels = [o['label'] for o in item['options']]
             if len(labels) < 2 or len(labels) != len(set(labels)):
                 raise ValueError('填涂模板缺少完整、唯一的选项位置')
+            if set(labels) != {chr(code) for code in range(ord('A'),ord(max(labels))+1)}:
+                raise ValueError('模板选项编号不连续，可能遗漏选项')
+            question = allowed[qid]
+            printed = set(re.findall(r'(?<![A-Za-z])([A-H])[.．、:：)）]', question.get('prompt', '')))
+            key = question.get('answer_key', '')
+            key = ''.join(str(k) for k in key) if isinstance(key, list) else str(key)
+            known = printed | (set(re.findall('[A-H]', key.upper())) if re.fullmatch(r'[A-Ha-h\s,，、;；]+',key) else set())
+            if not known.issubset(labels):
+                raise ValueError('模板遗漏题干或标准答案中明确存在的选项')
+
             for o in item['options']:
                 b = o['box']
                 if not any(b['page'] == r['page'] and b['x'] >= r['x'] and b['y'] >= r['y']
@@ -128,7 +145,11 @@ def validate_layout(value, questions, page_count):
 def generate_layout(assessment, document, settings, force=False):
     # Serialize same-assessment clicks, without holding SQLite while awaiting a model.
     with submission_work(settings.database_path, 'layout-' + assessment['id']):
-        return _generate_layout(assessment, document, settings, force)
+        from ..repository import get_assessment
+        current = get_assessment(assessment['id'])
+        if not current:
+            raise ValueError('试卷已不存在')
+        return _generate_layout(current, document, settings, force)
 
 
 def _generate_layout(assessment, document, settings, force):
@@ -150,7 +171,9 @@ def _generate_layout(assessment, document, settings, force):
                               render_pages=True, render_word_pages=True)
         if not doc.pages or len(doc.pages) > 12:
             raise ValueError('模板需为可预览的 1～12 页原卷或空白答题卡')
-        root = settings.data_dir / 'layout-pages' / doc.source_hash
+        # Each generation has immutable pages; failed/retried generation must never
+        # overwrite pages referenced by an already enabled template.
+        root = settings.data_dir / 'layout-pages' / doc.source_hash / uuid4().hex
         root.mkdir(parents=True, exist_ok=True)
         pages, content = [], []
         for page in doc.pages:
@@ -191,6 +214,10 @@ def _generate_layout(assessment, document, settings, force):
             from ..repository import get_assessment
             if fingerprint(get_assessment(assessment['id'])['questions']) != fingerprint(assessment['questions']):
                 raise ValueError('模板生成期间题目已修改，请重新生成')
+            current_layout = db.execute('SELECT payload FROM assessment_layouts WHERE assessment_id=?',(assessment['id'],)).fetchone()
+            current_id = decode_json(current_layout['payload'], {}).get('template_id') if current_layout else None
+            if current_id != previous.get('template_id'):
+                raise ValueError('模板生成期间区域已被人工修改，请先核对现有模板')
             db.execute('INSERT OR REPLACE INTO assessment_layouts VALUES (?,?,?,?,?,?,?,?)',
                        (assessment['id'], document['id'], document['source_hash'], fingerprint(assessment['questions']),
                         VERSION, encode_json(result), 1, utc_now()))

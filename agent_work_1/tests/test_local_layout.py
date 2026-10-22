@@ -279,3 +279,100 @@ def test_partial_local_recognition_can_finish_daily_batch(workspace,monkeypatch,
     result=get_submission(student['id'])
     assert {g['question_no']:g['score'] for g in result['grade_items']}=={'一-1':5.,'二-1':None}
     assert len(calls)==1
+
+
+
+def test_remove_auto_region_really_removes_local_mapping(workspace,cv):
+    client,a,qs,doc,source,calls=workspace
+    generate(workspace)
+    q=qs[1]
+    response=client.put('/api/questions/'+q['id'],json={**q,'rule_config':{'region':None}})
+    assert response.status_code==200,response.text
+    state=client.get(f"/api/assessments/{a['id']}/layout-template").json()
+    assert not any(i['question_id']==q['id'] for i in state['items'])
+    student=upload(workspace,mark(source))
+    assert student['normalization_report']['local_recognition']['missing']==['二-1']
+
+
+def test_correction_from_wrong_document_rolls_back(workspace,cv):
+    client,a,qs,doc,source,calls=workspace
+    old=generate(workspace)
+    q=qs[1]
+    result=client.put('/api/questions/'+q['id'],json={**q,'rule_config':{
+        'region':box(.12,.51,.6,.1),'region_document_id':'other-document'}})
+    assert result.status_code==400,result.text
+    state=client.get(f"/api/assessments/{a['id']}/layout-template").json()
+    assert state['template_id']==old['template_id']
+    assert client.get(f"/api/assessments/{a['id']}").json()['questions'][1]['rule_config']==q['rule_config']
+
+
+def test_failed_regeneration_never_overwrites_old_page(workspace,monkeypatch,cv):
+    from grading_agent.repository import get_assessment
+    from pathlib import Path
+    client,a,qs,doc,source,calls=workspace
+    generate(workspace)
+    old=templates.load_layout(get_assessment(a['id']))
+    path=Path(old['pages'][0]['path']);before=path.stat().st_mtime_ns
+    monkeypatch.setattr(templates,'request_json',lambda *a:({'output_text':'{"items":[]}','usage':{}},'bad'))
+    assert client.post(f"/api/assessments/{a['id']}/layout-template",json={'document_id':doc['id'],'force':True}).status_code==422
+    assert path.stat().st_mtime_ns==before
+    assert templates.load_layout(get_assessment(a['id']))['template_id']==old['template_id']
+
+
+def test_regeneration_does_not_overwrite_concurrent_teacher_correction(workspace,monkeypatch,cv):
+    client,a,qs,doc,source,calls=workspace
+    generate(workspace)
+    q=qs[1];region=box(.12,.51,.6,.1)
+    def concurrent(*args):
+        result=client.put('/api/questions/'+q['id'],json={**q,'rule_config':{'region':region}})
+        assert result.status_code==200
+        return {'output_text':json.dumps(draft(qs[0]['id'],q['id'])),'usage':{}},'synthetic'
+    monkeypatch.setattr(templates,'request_json',concurrent)
+    response=client.post(f"/api/assessments/{a['id']}/layout-template",json={'document_id':doc['id'],'force':True})
+    assert response.status_code==422,response.text
+    state=client.get(f"/api/assessments/{a['id']}/layout-template").json()
+    assert next(i for i in state['items'] if i['question_id']==q['id'])['regions']==[region]
+
+
+def test_omitted_known_option_is_rejected():
+    value=draft();value['items'][0]['options'].pop()
+    questions=[{'id':'choice','question_no':'一-1','scoring_mode':'choice_set','prompt':'A. a B. b C. c D. d','answer_key':'B'},
+               {'id':'text','question_no':'二-1','scoring_mode':'numeric'}]
+    with pytest.raises(ValueError,match='遗漏'):
+        templates.validate_layout(value,questions,1)
+
+
+@pytest.mark.parametrize('text,confidence', [('BC',.99),('B',1.5),('B',float('nan'))])
+def test_single_choice_text_ambiguity_and_bad_confidence_remain_missing(workspace,monkeypatch,cv,text,confidence):
+    from grading_agent.repository import get_assessment
+    from grading_agent.services.ingestion import NormalizedPage
+    client,a,qs,doc,source,calls=workspace
+    generate(workspace)
+    assessment=get_assessment(a['id']);layout=templates.load_layout(assessment)
+    layout['items'][0]['method']='text';layout['items'][0]['options']=[]
+    monkeypatch.setattr('grading_agent.services.ingestion.OCRAdapter.extract',lambda *a:(text,confidence,'synthetic'))
+    path=config.get_settings().data_dir/'synthetic-student.png';mark(source).save(path)
+    answers,warnings,_=local.recognize_answers(layout,[NormalizedPage(1,path,900,1200,'ok',{})],[assessment['questions'][0]],config.get_settings())
+    assert not answers and warnings
+
+
+
+def test_noncontiguous_option_labels_rejected():
+    value=draft();value['items'][0]['options'].pop(1)
+    with pytest.raises(ValueError,match='不连续'):
+        templates.validate_layout(value,[{'id':'choice','question_no':'1','scoring_mode':'choice_set'},
+                                        {'id':'text','question_no':'2','scoring_mode':'numeric'}],1)
+
+
+def test_old_saved_invalid_template_is_blocked_without_remote_fallback(workspace,cv):
+    client,a,qs,doc,source,calls=workspace
+    generate(workspace)
+    with transaction() as db:
+        row=db.execute('SELECT payload FROM assessment_layouts WHERE assessment_id=?',(a['id'],)).fetchone()
+        payload=decode_json(row['payload'],{})
+        payload['items'][0]['options'].pop(1)
+        db.execute('UPDATE assessment_layouts SET payload=? WHERE assessment_id=?',(json.dumps(payload),a['id']))
+    state=client.get(f"/api/assessments/{a['id']}/layout-template").json()
+    assert state['enabled'] and state['stale'] and state['warnings']
+    student=upload(workspace,mark(source))
+    assert not student['responses'] and student['status']=='extraction_failed' and len(calls)==1
