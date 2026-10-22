@@ -165,7 +165,7 @@ def test_home_disables_stale_html_cache():
     with TestClient(app) as client:
         response = client.get('/')
         assert response.headers['cache-control'] == 'no-store'
-        assert 'layout-audit-v7' in response.text
+        assert 'layout-ready-v8' in response.text
 
 
 def test_region_pointer_modes_scale_and_work_before_questions():
@@ -180,7 +180,7 @@ const text=fs.readFileSync(process.argv[1],'utf8');
 const code=text.slice(text.indexOf('const regionCanvas='),text.indexOf("action('previewRegion'"));
 const elements={},ctx={fillRect(){}};
 const $=id=>elements[id]??={value:'drag',width:1000,height:2000,getBoundingClientRect(){return {left:100,top:50,width:500,height:1000}},getContext(){return ctx},setPointerCapture(){}};
-const env={$,current:{questions:[]},regionLoadedPage:1,regionSelection:null,regionStart:null,regionClickStart:null,drawRegion(){},editableRegionQuestions(){return []},esc:String};
+const env={$,current:{questions:[]},regionLoadedPage:1,regionSelection:null,regionStart:null,regionClickStart:null,drawRegion(){},window:{addEventListener(){}},editableRegionQuestions(){return []},esc:String};
 vm.createContext(env);vm.runInContext(code,env);
 const event=(x,y)=>({clientX:x,clientY:y,button:0,pointerId:1,preventDefault(){}});
 const canvas=$('regionCanvas');
@@ -233,7 +233,7 @@ const text=fs.readFileSync(process.argv[1],'utf8');
 const block=text.slice(text.indexOf("action('loadRegionPage',async()=>{"),text.indexOf('const regionCanvas='));
 const elements={},pending=[],handlers={};
 const $=id=>elements[id]??={value:id==='regionPage'?'1':'doc',open:true};
-const env={$,aid:()=> 'assessment',action:(id,f)=>handlers[id]=f,regionPageRequest:0,regionLoadedPage:null,
+const env={$,applyRegionScale(){},aid:()=> 'assessment',action:(id,f)=>handlers[id]=f,regionPageRequest:0,regionLoadedPage:null,
  regionImage:null,regionSelection:null,selectSavedRegion(){},URL:{createObjectURL:b=>String(b.number),revokeObjectURL(){}},
  Image:class{async decode(){this.naturalWidth=Number(this.src)*100;this.naturalHeight=200;}},
  fetch:()=>new Promise(resolve=>pending.push(resolve))};

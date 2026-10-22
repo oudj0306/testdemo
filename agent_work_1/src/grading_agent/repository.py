@@ -111,6 +111,24 @@ def create_question(assessment_id: str, data: dict[str, Any]) -> dict[str, Any]:
         return row_dict(connection.execute("SELECT * FROM questions WHERE id=?", (question_id,)).fetchone())  # type: ignore[return-value]
 
 
+def create_questions_if_empty(assessment_id: str, values: list[dict[str, Any]]) -> None:
+    """Commit a complete generated question set; never leave a partial paper."""
+    from .schemas import QuestionCreate
+    checked = [QuestionCreate.model_validate(v).model_dump(mode='json') for v in values]
+    if not checked or len({q['question_no'] for q in checked}) != len(checked):
+        raise ValueError('模型未识别到题目或返回重复题号，未写入任何题目')
+    with transaction() as db:
+        db.execute('BEGIN IMMEDIATE')
+        if db.execute('SELECT 1 FROM questions WHERE assessment_id=?',(assessment_id,)).fetchone():
+            raise ValueError('该试卷已有题目，未覆盖已有配置；请刷新后继续生成位置模板')
+        db.executemany('''INSERT INTO questions(id,assessment_id,question_no,prompt,question_type,capture_mode,
+            answer_form,scoring_mode,max_score,answer_key,answer_key_state,rule_config,rubric,review_policy,created_at)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+            [(new_id(),assessment_id,q['question_no'],q['prompt'],q['question_type'],q['capture_mode'],
+              q['answer_form'],q['scoring_mode'],q['max_score'],encode_json(q['answer_key']),q['answer_key_state'],
+              encode_json(q['rule_config']),encode_json(q['rubric']),q['review_policy'],utc_now()) for q in checked])
+
+
 def update_question(question_id: str, data: dict[str, Any]) -> dict[str, Any]:
     with transaction() as connection:
         previous = connection.execute('SELECT * FROM questions WHERE id=?',(question_id,)).fetchone()

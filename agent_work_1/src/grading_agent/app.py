@@ -488,10 +488,15 @@ def assessment_generate_candidate_key(assessment_id: str) -> dict[str, Any]:
         raise HTTPException(400, "该试卷已有逐题配置；为避免覆盖，请新建试卷版本后再生成")
     try:
         compiled = compile_question_paper(list_assessment_documents(assessment_id), get_settings())
+        usage = compiled.get("usage", {})
+        record_token_usage(assessment_id, None, "compile", usage.get("input_tokens", 0), usage.get("output_tokens", 0), 0)
+        items = []
         for item in compiled["questions"]:
+            import math
+            if not math.isfinite(float(item["max_score"])) or not math.isfinite(float(item["confidence"])):
+                raise ValueError("题目分值或置信度无效，未写入题目")
             max_score = max(0.5, min(float(item["max_score"]), 1000.0))
-            create_question(
-                assessment_id,
+            items.append(
                 {
                     "question_no": item["question_no"],
                     "prompt": item["prompt"],
@@ -507,8 +512,8 @@ def assessment_generate_candidate_key(assessment_id: str) -> dict[str, Any]:
                     "review_policy": "always_review",
                 },
             )
-        usage = compiled.get("usage", {})
-        record_token_usage(assessment_id, None, "compile", usage.get("input_tokens", 0), usage.get("output_tokens", 0), 0)
+        from .repository import create_questions_if_empty
+        create_questions_if_empty(assessment_id,items)
         return {"assessment": get_assessment(assessment_id), "usage": usage}
     except Exception as exc:
         raise fail(exc) from exc

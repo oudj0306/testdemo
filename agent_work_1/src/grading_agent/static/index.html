@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="theme-color" content="#253d66"><title>阅知 · 阅卷工作台</title>
-  <link rel="stylesheet" href="/static/style.css?v=20261021-layout6">
+  <link rel="stylesheet" href="/static/style.css?v=20261022-layout8">
 </head>
 <body>
 <a class="skip-link" href="#mainContent">跳到工作区</a>
@@ -80,11 +80,11 @@
 <dialog id="regionDialog" class="optimization-dialog region-editor">
   <header class="region-header"><div><span class="region-eyebrow">ANSWER REGIONS</span><h2>作答区域工作台</h2><p>先框选，再选择题号保存。同版答卷复用一次配置。</p></div><button id="closeRegions" class="secondary">关闭</button></header>
   <div class="region-auto-note"><strong>选择题 · 自动识别，无需框选</strong><span>先生成自动位置模板，再由本地填涂检测或 OCR 读取答案；此处只用于纠正非选择题的位置。</span></div>
-  <div class="region-controls"><label>原卷资料<select id="regionDocument"></select></label><label class="region-page-field">页码<input id="regionPage" type="number" min="1" value="1"></label><label>查看已存区域<select id="regionQuestion"></select></label><label>框选方式<select id="regionMode"><option value="drag">按住鼠标拖动</option><option value="corners">两点框选</option></select></label><button id="loadRegionPage">加载页面</button></div>
+  <div class="region-controls"><label>原卷资料<select id="regionDocument"></select></label><label class="region-page-field">页码<input id="regionPage" type="number" min="1" value="1"></label><label>查看已存区域<select id="regionQuestion"></select></label><label>显示比例<select id="regionScale"><option value="page">整页适应</option><option value="width">按宽度查看</option></select></label><label>框选方式<select id="regionMode"><option value="drag">按住鼠标拖动</option><option value="corners">两点框选</option></select></label><button id="loadRegionPage">加载页面</button></div>
   <p class="region-guidance">仅为需要局部 OCR 的非选择题设置区域。在原试卷或空白答题卡上，框住学生实际填写答案的位置。</p>
   <p id="regionStatus" role="status" aria-live="polite"></p>
   <div class="region-tools"><button id="regionPrepare" class="secondary" type="button">返回准备试卷与题目</button><button id="removeRegion" class="secondary">移除当前题区域</button></div>
-  <div class="region-page-surface"><canvas id="regionCanvas" aria-label="拖动或点击两个对角框选作答区域"></canvas></div>
+  <div id="regionSurface" class="region-page-surface"><canvas id="regionCanvas" aria-label="拖动或点击两个对角框选作答区域"></canvas></div>
   <section id="regionActions" class="region-selection-card" role="region" aria-label="保存选中区域" hidden>
     <div class="region-card-title"><div><span class="region-eyebrow">REGION SELECTED</span><h3>保存这个作答区域？</h3></div><button id="cancelRegion" class="region-dismiss" aria-label="取消本次框选">×</button></div>
     <p id="regionSelectionInfo" class="muted"></p>
@@ -97,5 +97,5 @@
 </dialog>
 <dialog id="layoutPreviewDialog" class="optimization-dialog"><div class="toolbar"><h2>自动模板 · 位置核对</h2><button id="closeLayoutPreview" class="secondary">关闭</button></div><p>蓝框：文字作答区域；绿框：选择题填涂区域及选项。首次请核对题号与实际位置，错误的文字区域可用框选纠正。</p><div class="toolbar"><label>模板页码<input id="layoutPreviewPage" type="number" min="1" value="1"></label><button id="loadLayoutPreview">查看该页</button></div><p id="layoutPreviewStatus" role="status"></p><img id="layoutPreviewImage" alt="自动模板区域标注预览" style="width:100%"></dialog>
 <dialog id="trainingDialog" class="optimization-dialog"><h2>批准训练样本</h2><p>请删除姓名和联系方式等身份信息。批准脱敏文本不代表确认机器评分；必须先保存人工复核，才能导出教师确认标签。</p><label>脱敏作答<textarea id="trainingText" rows="8"></textarea></label><label>批准人<input id="trainingApprover" maxlength="100"></label><label class="inline"><input id="trainingConsent" type="checkbox">我已检查脱敏文本，并批准用于训练数据导出</label><div class="toolbar"><button id="approveTraining">批准</button><button id="closeTraining" class="secondary">取消</button></div></dialog>
-<script src="/static/chart.umd.min.js"></script><script src="/static/app.js?v=20261021-layout-audit-v7"></script>
+<script src="/static/chart.umd.min.js"></script><script src="/static/app.js?v=20261021-layout-ready-v8"></script>
 </body></html>

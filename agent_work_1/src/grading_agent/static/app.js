@@ -12,7 +12,7 @@ function currentSubmissionScore(submission){
  const scores=grades.map(g=>g.effective_score??g.final_score??g.score).filter(value=>value!==null&&value!==undefined&&value!==''&&Number.isFinite(Number(value)));
  return scores.length?scores.reduce((total,value)=>total+Number(value),0):null;
 }
-let current = null, selected = null, activeLayout = null;
+let current = null, selected = null, activeLayout = null, layoutBusy = false, questionPreparation = null;
 let submissionRows = [], activeJobs = new Map(), pendingFiles = [], currentTab = 'paper', openRequest = 0;
 let submissionHistory = [];
 let assessmentRequest = 0;
@@ -40,7 +40,7 @@ let reviewViewValue=$('reviewOnly').value;
 $('reviewOnly').onchange=()=>{if(!mayLeaveDraft()){$('reviewOnly').value=reviewViewValue;return;}reviewViewValue=$('reviewOnly').value;if(rerenderCurrentQuestion)rerenderCurrentQuestion();};
 async function api(path, options={}) {const r=await fetch(path,options); const body=await r.json().catch(()=>({})); if(!r.ok) throw Error(typeof body.detail==='string'?body.detail:JSON.stringify(body.detail||'请求失败')); return body;}
 function notice(text,error=false){$('notice').textContent=text;$('notice').className=error?'error':'';}
-function action(id,fn){$(id).onclick=async()=>{const b=$(id);if(b.disabled)return;b.disabled=true;b.setAttribute('aria-busy','true');notice('正在处理，请稍候…');try{await fn();}catch(e){notice(e.message,true);}finally{b.disabled=false;b.removeAttribute('aria-busy');}};}
+function action(id,fn){$(id).onclick=async()=>{const b=$(id);if(b.disabled)return;b.disabled=true;b.setAttribute('aria-busy','true');notice('正在处理，请稍候…');try{await fn();}catch(e){notice(e.message,true);}finally{b.disabled=false;b.removeAttribute('aria-busy');if(id==='generateLayout')updateLayoutEntry();if(id==='saveRegion')refreshRegionSaveButton();}};}
 function hasDraft(){return [...$('submissionBody').querySelectorAll('[data-initial]')].some(e=>e.value!==e.dataset.initial);}
 function mayLeaveDraft(){if(!hasDraft())return true;if(!confirm('当前有未保存的校对或复核内容。确定放弃修改并继续？'))return false;$('submissionBody').querySelectorAll('[data-initial]').forEach(e=>e.value=e.dataset.initial);return true;}
 window.addEventListener('beforeunload',e=>{if(hasDraft()){e.preventDefault();e.returnValue='';}});
@@ -320,6 +320,7 @@ function wrapTables(container){container.querySelectorAll('table').forEach(table
 (async()=>{await Promise.all([refreshHealth(),assessments(),loadSettings()].map(p=>p.catch(e=>notice(e.message,true))));})();
 
 function editableRegionQuestions(){return (current?.questions||[]).filter(q=>q.scoring_mode!=='choice_set'&&!['single_choice','multiple_choice'].includes(q.question_type));}
+function savedQuestionRegion(q){if(!q)return null;return q.rule_config?.region||activeLayout?.items?.find(i=>i.question_id===q.id)?.regions?.[0]||null;}
 // Region coordinates always refer to the source page, independent of CSS scaling.
 let regionImage=null, regionSelection=null, regionStart=null, regionDocumentId=null, regionLoadedPage=null, regionPreviewUrl=null, regionSaved=false,regionClickStart=null,regionPageRequest=0;
 function setupRegionEditor(docs){
@@ -328,6 +329,7 @@ function setupRegionEditor(docs){
  $('regionQuestion').innerHTML=editableRegionQuestions().map(q=>'<option value="'+esc(q.id)+'">'+esc(layoutQuestionLabel(q))+(q.rule_config?.region?' · 已配置':'')+'</option>').join('');
  if(activeLayout?.document_id&&supported.some(d=>d.id===activeLayout.document_id))$('regionDocument').value=activeLayout.document_id;
  $('regionSaveQuestion').innerHTML=$('regionQuestion').innerHTML;
+ if($('regionDialog').open){$('regionQuestion').disabled=!editableRegionQuestions().length;$('removeRegion').disabled=!editableRegionQuestions().length;refreshRegionSaveButton();}
  $('editRegions').disabled=false;$('editRegions').title=!supported.length?'请先上传原试卷':!current.questions.length?'请先生成或录入题目':'支持图片、PDF 和 Word 原卷';
 }
 function drawRegion(){
@@ -346,12 +348,12 @@ function openRegionEditor(){
  $('regionCanvas').width=0;$('regionCrop').hidden=true;
  const canRender=!!current&&$('regionDocument').options.length>0,hasQuestions=editableRegionQuestions().length>0;
  const problem=!current?'请先新建或选择试卷。':!canRender?'请先在试卷资料中上传原试卷（Word、PDF 或图片）。':!hasQuestions?(current?.questions?.length?'本卷选择题自动识别，无需设置区域。':'可先预览原试卷；请先生成参考答案或录入题目，再为题号保存答题区域。'):'';
- for(const id of ['loadRegionPage','regionDocument','regionPage','regionMode','previewRegion'])$(id).disabled=!canRender;
+ for(const id of ['loadRegionPage','regionDocument','regionPage','regionMode','regionScale','previewRegion'])$(id).disabled=!canRender;
  for(const id of ['regionQuestion','saveRegion','removeRegion'])$(id).disabled=!canRender||!hasQuestions;
  $('regionStatus').textContent=problem||'在原试卷上框选学生将填写答案的空白位置，松开后选择题号保存。';
  $('regionStatus').className=problem?'region-guidance':'region-guidance ready';
  if(!$('regionDialog').open)$('regionDialog').showModal();
- if(canRender){$('regionPage').value=String(current.questions?.find(q=>q.id===$('regionQuestion').value)?.rule_config?.region?.page||1);$('loadRegionPage').click();}
+ if(canRender){$('regionPage').value=String(savedQuestionRegion(current.questions?.find(q=>q.id===$('regionQuestion').value))?.page||1);$('loadRegionPage').click();}
 }
 $('editRegions').onclick=openRegionEditor;
 $('regionPrepare').onclick=()=>{$('regionDialog').close();const target=!current?$('newAssessment'):!$('regionDocument').options.length?$('paperFiles'):!current.questions.length?$('generate'):$('editRegions');target.scrollIntoView({block:'center'});target.focus();};
@@ -359,7 +361,7 @@ $('closeRegions').onclick=()=>{regionPageRequest++;$('regionDialog').close();};
 $('regionDialog').addEventListener('close',()=>{regionPageRequest++;if(regionPreviewUrl)URL.revokeObjectURL(regionPreviewUrl);if(regionSaved)loadAssessment().catch(e=>notice(e.message,true));});
 $('regionDocument').onchange=()=>{regionPageRequest++;regionLoadedPage=null;regionSelection=null;regionStart=null;regionClickStart=null;$('regionActions').hidden=true;$('regionStatus').textContent='请重新加载页面';};
 $('regionPage').oninput=()=>{regionPageRequest++;regionLoadedPage=null;regionSelection=null;regionStart=null;regionClickStart=null;$('regionActions').hidden=true;$('regionStatus').textContent='请重新加载页面';};
-$('regionQuestion').onchange=selectSavedRegion;
+$('regionQuestion').onchange=()=>{const region=savedQuestionRegion(current?.questions?.find(q=>q.id===$('regionQuestion').value));if(region&&region.page!==regionLoadedPage){$('regionPage').value=String(region.page);$('loadRegionPage').click();}else selectSavedRegion();};
 action('loadRegionPage',async()=>{
  const request=++regionPageRequest,assessmentId=aid();regionLoadedPage=null;regionImage=null;regionSelection=null;$('regionActions').hidden=true;
  const doc=$('regionDocument').value,page=Number($('regionPage').value);if(!Number.isInteger(page)||page<1)throw Error('请输入有效页码');$('regionStatus').textContent='正在加载页面；Word 原卷首次需要本机转换为 PDF，请稍候。';
@@ -367,9 +369,15 @@ action('loadRegionPage',async()=>{
  if(request!==regionPageRequest||!$('regionDialog').open||aid()!==assessmentId)return;
  if(!response.ok){const detail=await response.json().catch(()=>({}));const message=detail.detail||'页面加载失败，请检查页码和资料类型';$('regionStatus').textContent=message;throw Error(message);}
  const url=URL.createObjectURL(await response.blob());
- try{const image=new Image();image.src=url;await image.decode();if(request!==regionPageRequest||!$('regionDialog').open||aid()!==assessmentId)return;regionImage=image;regionDocumentId=doc;regionLoadedPage=page;$('regionCanvas').width=image.naturalWidth;$('regionCanvas').height=image.naturalHeight;selectSavedRegion();}finally{URL.revokeObjectURL(url);}
+ try{const image=new Image();image.src=url;await image.decode();if(request!==regionPageRequest||!$('regionDialog').open||aid()!==assessmentId)return;regionImage=image;regionDocumentId=doc;regionLoadedPage=page;$('regionCanvas').width=image.naturalWidth;$('regionCanvas').height=image.naturalHeight;applyRegionScale();selectSavedRegion();}finally{URL.revokeObjectURL(url);}
 });
 const regionCanvas=$('regionCanvas');
+function applyRegionScale(){
+ if(!regionImage)return;const surface=$('regionSurface'),canvas=$('regionCanvas');
+ const width=Math.max(1,surface.clientWidth-36),height=Math.max(1,surface.clientHeight-36);
+ canvas.style.width=Math.round($('regionScale').value==='page'?Math.min(width,height*canvas.width/canvas.height):width)+'px';
+}
+$('regionScale').onchange=applyRegionScale;window.addEventListener('resize',applyRegionScale);
 function regionPoint(e){const rect=regionCanvas.getBoundingClientRect();return {x:Math.max(0,Math.min(1,(e.clientX-rect.left)/rect.width)),y:Math.max(0,Math.min(1,(e.clientY-rect.top)/rect.height))};}
 function updateRegionSelection(start,end){
  regionSelection={page:regionLoadedPage,x:Math.min(end.x,start.x),y:Math.min(end.y,start.y),width:Math.abs(end.x-start.x),height:Math.abs(end.y-start.y),page_aspect:regionCanvas.width/regionCanvas.height};drawRegion();
@@ -379,13 +387,17 @@ function showRegionActions(){
  $('regionActions').hidden=false;$('regionCrop').hidden=true;$('regionActionStatus').textContent='';
  $('regionSaveQuestion').innerHTML=choices.length?choices.map(q=>'<option value="'+esc(q.id)+'">'+esc(layoutQuestionLabel(q))+(q.rule_config?.region?' · 将替换已存区域':'')+'</option>').join(''):'<option value="">暂无可保存题目</option>';
  if(choices.some(q=>q.id===$('regionQuestion').value))$('regionSaveQuestion').value=$('regionQuestion').value;
- $('regionSaveQuestion').disabled=!choices.length;$('saveRegion').disabled=!choices.length;
+ $('regionSaveQuestion').disabled=!choices.length;refreshRegionSaveButton();
  $('regionSelectionInfo').textContent='第 '+regionLoadedPage+' 页 · 宽 '+Math.round(regionSelection.width*100)+'% · 高 '+Math.round(regionSelection.height*100)+'%';
  updateRegionSaveHint();
 }
+function refreshRegionSaveButton(){
+ $('saveRegion').disabled=!editableRegionQuestions().length&&!!current?.questions?.length;
+ $('saveRegion').textContent=!current?.questions?.length?'识别题目后选择题号':'保存区域';
+}
 function updateRegionSaveHint(){
  const q=editableRegionQuestions().find(q=>q.id===$('regionSaveQuestion').value);
- $('regionSaveHint').textContent=q?(q.rule_config?.region?'该题已有区域，保存会替换旧区域。':'若该题已有自动区域，本次保存会替换；可继续框选下一题。'):'选择题无需框选；非选择题须先生成或录入题目。';
+ $('regionSaveHint').textContent=!current?.questions?.length?'尚未识别题目：点击下方按钮先识别（会调用模型），当前选区会保留；完成后选择题号保存。':q?(q.rule_config?.region?'该题已有区域，保存会替换旧区域。':'若该题已有自动区域，本次保存会替换；可继续框选下一题。'):'选择题无需框选；非选择题须先生成或录入题目。';
 }
 $('regionSaveQuestion').onchange=updateRegionSaveHint;
 $('cancelRegion').onclick=()=>{regionSelection=null;regionStart=null;regionClickStart=null;$('regionActions').hidden=true;drawRegion();$('regionStatus').textContent='已取消本次框选，可重新选择区域。';};
@@ -424,7 +436,7 @@ async function persistRegion(remove){
  await api('/api/questions/'+q.id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({...q,rule_config:config})});
  q.rule_config=config;current.questions=assessment.questions;regionSaved=true;await loadLayoutStatus();$('regionQuestion').innerHTML=editableRegionQuestions().map(item=>'<option value="'+esc(item.id)+'">'+esc(layoutQuestionLabel(item))+(item.rule_config?.region?' · 已配置':'')+'</option>').join('');$('regionQuestion').value=targetId;selectSavedRegion();$('regionStatus').textContent=remove?'区域已移除':'区域已保存，下次识别复用；已保存作答保持原样';
 }
-action('saveRegion',async()=>{try{await persistRegion(false);}catch(e){$('regionActionStatus').textContent=e.message;throw e;}});action('removeRegion',()=>persistRegion(true));
+action('saveRegion',async()=>{try{if(!current?.questions?.length){const id=aid(),draft=regionSelection;$('regionActionStatus').textContent='正在识别题目，请稍候；当前选区已保留。';await ensureAssessmentQuestions(id);if(regionSelection!==draft||!$('regionDialog').open)return;showRegionActions();$('regionActionStatus').textContent='题目已识别，请选择对应题号，再点击保存区域。';return;}await persistRegion(false);}catch(e){$('regionActionStatus').textContent=e.message;throw e;}});action('removeRegion',()=>persistRegion(true));
 let trainingGrade=null;
 function openTraining(g,response){trainingGrade=g;$('trainingText').value=response?.raw_text||'';$('trainingApprover').value='';$('trainingConsent').checked=false;$('trainingDialog').showModal();}
 $('closeTraining').onclick=()=>{$('trainingDialog').close();};
@@ -441,19 +453,46 @@ async function loadLayoutStatus(docs){
  if(state.document_id)$('layoutDocument').value=state.document_id;
  $('layoutBadge').textContent=state.enabled?(state.stale?'模板待更新':'本地识别已启用'):state.exists?'已停用':'尚未配置';
  $('layoutBadge').className='badge '+(state.enabled&&!state.stale?'':'neutral');
- $('generateLayout').disabled=!current?.questions?.length||!$('layoutDocument').options.length;
+ updateLayoutEntry();
  $('previewLayout').disabled=!state.exists;$('toggleLayout').disabled=!state.exists;
  $('toggleLayout').textContent=state.enabled?'停用并恢复原识别路径':'启用本地模板';
  const deps=state.local_dependencies||{},missing=Object.entries(deps).filter(([_,v])=>!v).map(([k])=>k);
- $('layoutState').textContent=state.enabled?(state.stale?'题目或来源已变更：请勾选重新生成；未更新前保留识别缺失，不回退视觉 API。':'模板已启用：'+state.items.length+' 道题，'+state.page_count+' 页。学生答卷仅本地识别；未定位或识别不确定的题保留缺分。'):'模板首次解析使用模型，重复点击复用有效模板；启用后不自动调用视觉 API。';
+ $('layoutState').textContent=!current?.questions?.length?'已上传资料，但尚未识别题目。点击“识别题目并生成模板”将先生成题目与候选答案，再定位作答区；首次需要两步模型请求。':state.enabled?(state.stale?'题目或来源已变更：请勾选重新生成；未更新前保留识别缺失，不回退视觉 API。':'模板已启用：'+state.items.length+' 道题，'+state.page_count+' 页。学生答卷仅本地识别；未定位或识别不确定的题保留缺分。'):'模板首次解析使用模型，重复点击复用有效模板；启用后不自动调用视觉 API。';
  if(missing.length)$('layoutState').textContent+=' 当前服务缺少 '+missing.join(' / ')+'，请用优化版 GPU 环境启动。';
  if(state.warnings?.length)$('layoutState').textContent+=' '+state.warnings.join('；');
  $('layoutQuestions').innerHTML=(state.items||[]).map(item=>{const q=current.questions.find(q=>q.id===item.question_id);return q?'<span class="layout-question-chip"><b>'+esc(item.section||'未分组')+'</b> / '+esc(item.number||q.question_no)+' · '+(item.method==='omr'?'填涂检测':'文字 OCR')+(item.confidence<.9?' · 待核对':'')+'</span>':'';}).join('');
 }
+function updateLayoutEntry(){
+ const button=$('generateLayout');button.disabled=layoutBusy;
+ button.textContent=layoutBusy?'正在处理…':!current?.questions?.length?'识别题目并生成模板':'生成并启用本地模板';
+ button.title=!current?'请先新建或选择试卷':!$('layoutDocument').options.length?'请先上传原卷或空白答题卡':!current.questions.length?'先识别题目与候选答案，再生成位置模板；会产生两步模型用量':'首次请求模型生成位置；有效模板直接复用';
+}
+async function ensureAssessmentQuestions(assessmentId){
+ if(current?.id!==assessmentId)throw Error('试卷已切换，请重新操作');
+ if(current.questions.length)return;
+ if(!questionPreparation){
+  questionPreparation=(async()=>{
+   await api('/api/assessments/'+assessmentId+'/generate-candidate-key',{method:'POST'});
+   if(current?.id!==assessmentId)throw Error('试卷已切换，题目结果已保存，请返回原试卷查看');
+   await loadAssessment();
+   if(!current?.questions?.length)throw Error('原卷中未识别到题目，请检查资料可读性，或上传含题干的原试卷后重试');
+  })().finally(()=>{questionPreparation=null;});
+ }
+ await questionPreparation;
+}
 action('generateLayout',async()=>{
- if(!current)throw Error('请先选择试卷');$('layoutState').textContent='正在解析原卷位置；本次只生成模板，请稍候。';
- try{await api('/api/assessments/'+aid()+'/layout-template',json({document_id:$('layoutDocument').value,force:$('forceLayout').checked}));$('forceLayout').checked=false;await loadLayoutStatus();notice('自动模板已启用，后续答卷在本地识别。');}
- catch(e){$('layoutState').textContent=e.message;throw e;}
+ const id=current?.id,documentId=$('layoutDocument').value,force=$('forceLayout').checked;
+ if(!id){$('layoutState').textContent='请先新建或选择试卷，再上传原卷。';throw Error($('layoutState').textContent);}
+ if(!documentId){$('layoutState').textContent='请先按“原试卷”类型上传原卷或空白答题卡，再选择模板来源。';throw Error($('layoutState').textContent);}
+ layoutBusy=true;updateLayoutEntry();
+ try{
+  if(!current.questions.length){$('layoutState').textContent='第 1/2 步：正在识别题目并生成候选答案，请稍候…';await ensureAssessmentQuestions(id);}
+  if(current?.id!==id)throw Error('试卷已切换，请返回原试卷继续生成模板');
+  $('layoutState').textContent='正在定位作答区与填涂位置，生成本地识别模板…';
+  await api('/api/assessments/'+id+'/layout-template',json({document_id:documentId,force}));
+  if(current?.id===id){$('forceLayout').checked=false;await loadAssessment();notice('自动模板已启用。请核对位置以及候选答案，再开始批改。');}
+ }catch(e){if(current?.id===id)$('layoutState').textContent=e.message;throw e;}
+ finally{layoutBusy=false;updateLayoutEntry();}
 });
 action('toggleLayout',async()=>{await api('/api/assessments/'+aid()+'/layout-template',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled:!activeLayout.enabled})});await loadLayoutStatus();});
 $('previewLayout').onclick=()=>{$('layoutPreviewPage').value='1';$('layoutPreviewDialog').showModal();$('loadLayoutPreview').click();};
