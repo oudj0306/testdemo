@@ -126,7 +126,7 @@ def workspace(monkeypatch):
             assert response.status_code==200,response.text
             qs.append(response.json())
         source=blank_sheet()
-        document=client.post(f"/api/assessments/{a['id']}/documents",data={'kind':'question_paper'},
+        document=client.post(f"/api/assessments/{a['id']}/documents",data={'kind':'answer_sheet'},
                              files=[('files',('blank.png',data(source),'image/png'))]).json()[0]
         def fake(request,settings,stage,timeout):
             calls.append(stage)

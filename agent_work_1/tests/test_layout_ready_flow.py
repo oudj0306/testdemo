@@ -44,16 +44,16 @@ def test_empty_paper_prepares_questions_then_layout_without_manual_numbering(mon
     from grading_agent.services import layout_templates
     monkeypatch.setattr(config,'_settings_cache',replace(config.get_settings(),openai_api_key='synthetic'))
     calls=[]
-    def compile(*args):
+    def compile(*args, **kwargs):
         calls.append('questions');return {'questions':[candidate('一-1'),candidate('二-1')],'usage':{}}
     monkeypatch.setattr('grading_agent.app.compile_question_paper',compile)
     with TestClient(app) as client:
         a=client.post('/api/assessments',json={'title':'Synthetic no questions','subject_codes':[]}).json()
         image=io.BytesIO();Image.new('RGB',(600,800),'white').save(image,'PNG')
-        doc=client.post(f"/api/assessments/{a['id']}/documents",data={'kind':'question_paper'},
+        doc=client.post(f"/api/assessments/{a['id']}/documents",data={'kind':'answer_sheet'},
                         files=[('files',('paper.png',image.getvalue(),'image/png'))]).json()[0]
         assert not get_assessment(a['id'])['questions']
-        assert client.post(f"/api/assessments/{a['id']}/generate-candidate-key").status_code==200
+        assert client.post(f"/api/assessments/{a['id']}/extract-questions").status_code==200
         def model(*args):
             calls.append('layout')
             values=[dict(question_id=q['id'],section=q['question_no'].split('-')[0],number='1',method='text',

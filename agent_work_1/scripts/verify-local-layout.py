@@ -60,7 +60,7 @@ def main():
             qs.append(q.json())
         # Register the blank fixture without OCR at upload; answer OCR below is real.
         with patch('grading_agent.app.extract_reference_text',return_value=('', 'synthetic')):
-            doc=client.post(f"/api/assessments/{a['id']}/documents",data={'kind':'question_paper'},
+            doc=client.post(f"/api/assessments/{a['id']}/documents",data={'kind':'answer_sheet'},
                             files=[('files',('blank.png',png(image),'image/png'))]).json()[0]
         def b(x,y,w,h):return dict(page=1,x=x,y=y,width=w,height=h)
         result={'items':[

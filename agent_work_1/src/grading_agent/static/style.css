@@ -32,3 +32,8 @@ button,.button{display:inline-flex;align-items:center;justify-content:center;gap
 #regionSurface{height:58vh;overflow:auto;display:flex;align-items:flex-start;justify-content:center}#regionSurface #regionCanvas{flex:none;max-width:none;height:auto}#regionActions[aria-busy=true]{opacity:.75}
 
 #regionDialog[open]{display:flex;flex-direction:column;height:94vh;max-height:94vh;overflow:hidden;padding:20px}#regionDialog .region-header{margin-bottom:10px}#regionDialog .region-header h2{font-size:20px}#regionDialog .region-auto-note{padding:10px 14px;margin-bottom:10px}#regionDialog .region-controls{padding:12px;margin-bottom:8px}#regionDialog .region-guidance{margin:6px 0;font-size:11px}#regionDialog .region-tools{margin:8px 0}#regionDialog .region-header,#regionDialog .region-auto-note,#regionDialog .region-controls,#regionDialog .region-guidance,#regionDialog .region-tools{flex-shrink:0}#regionDialog #regionSurface{height:auto;min-height:100px;flex:1}
+
+/* Three separate preparation stages, in reading order. */
+#paper .paper-grid{display:grid;grid-template-columns:minmax(0,1fr);gap:24px}
+#paper .materials-card{position:static}
+#paper .local-layout-card{margin-bottom:0}

@@ -441,8 +441,8 @@ async def assessment_documents_upload(
     kind: str = Form(...),
     files: list[UploadFile] = File(...),
 ) -> list[dict[str, Any]]:
-    if kind not in {"question_paper", "answer_key", "rubric", "reference"}:
-        raise HTTPException(400, "kind 必须是 question_paper、answer_key、rubric 或 reference")
+    if kind not in {"question_paper", "answer_sheet", "answer_key", "rubric", "reference"}:
+        raise HTTPException(400, "kind 必须是 question_paper、answer_sheet、answer_key、rubric 或 reference")
     if not files or len(files) > 20:
         raise HTTPException(400, "每次可上传 1 到 20 个知识文档")
     if not get_assessment(assessment_id):
@@ -481,15 +481,26 @@ def assessment_documents_list(assessment_id: str) -> list[dict[str, Any]]:
 
 @app.post("/api/assessments/{assessment_id}/generate-candidate-key")
 def assessment_generate_candidate_key(assessment_id: str) -> dict[str, Any]:
+    return _prepare_questions(assessment_id, structure_only=False)
+
+
+@app.post("/api/assessments/{assessment_id}/extract-questions")
+def assessment_extract_questions(assessment_id: str) -> dict[str, Any]:
+    return _prepare_questions(assessment_id, structure_only=True)
+
+
+def _prepare_questions(assessment_id: str, *, structure_only: bool) -> dict[str, Any]:
     assessment = get_assessment(assessment_id)
     if not assessment:
         raise HTTPException(404, "试卷不存在")
     if assessment["questions"]:
         raise HTTPException(400, "该试卷已有逐题配置；为避免覆盖，请新建试卷版本后再生成")
     try:
-        compiled = compile_question_paper(list_assessment_documents(assessment_id), get_settings())
+        documents = list_assessment_documents(assessment_id)
+        compiled = (compile_question_paper(documents, get_settings(), structure_only=True) if structure_only
+                    else compile_question_paper(documents, get_settings()))
         usage = compiled.get("usage", {})
-        record_token_usage(assessment_id, None, "compile", usage.get("input_tokens", 0), usage.get("output_tokens", 0), 0)
+        record_token_usage(assessment_id, None, "structure" if structure_only else "compile", usage.get("input_tokens", 0), usage.get("output_tokens", 0), 0)
         items = []
         for item in compiled["questions"]:
             import math
@@ -505,10 +516,10 @@ def assessment_generate_candidate_key(assessment_id: str) -> dict[str, Any]:
                     "answer_form": "text",
                     "scoring_mode": item["scoring_mode"],
                     "max_score": max_score,
-                    "answer_key": item["candidate_answer"],
-                    "answer_key_state": "candidate",
+                    "answer_key": "" if structure_only else item["candidate_answer"],
+                    "answer_key_state": "missing" if structure_only else "candidate",
                     "rule_config": {"generated_confidence": max(0.0, min(float(item["confidence"]), 1.0))},
-                    "rubric": item["rubric"],
+                    "rubric": [] if structure_only else item["rubric"],
                     "review_policy": "always_review",
                 },
             )
@@ -535,6 +546,10 @@ def assessment_fill_missing(assessment_id: str) -> dict[str, Any]:
     try:
         result = fill_missing_parts(assessment["questions"], get_settings(),
                                     list_assessment_documents(assessment_id))
+        usage = result.get("usage", {})
+        if any(usage.get(k, 0) for k in ("input_tokens", "output_tokens", "cached_tokens")):
+            record_token_usage(assessment_id, None, "answer_key", usage.get("input_tokens", 0),
+                               usage.get("output_tokens", 0), usage.get("cached_tokens", 0))
         for item in result["updates"]:
             update_question_key_rubric(
                 item["id"],

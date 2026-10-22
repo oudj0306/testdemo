@@ -125,7 +125,7 @@ def test_template_button_handles_word_and_empty_questions():
     block = text[text.index('function setupRegionEditor'):text.index('function drawRegion')]
     assert 'application/msword' in block and 'wordprocessingml.document' in block
     assert "$('editRegions').disabled=false" in block
-    assert '请先生成参考答案或录入题目' in text
+    assert '先从原试卷识别题目，不生成参考答案' in text
     assert 'detail.detail' in text
 
 
@@ -141,9 +141,9 @@ const text=fs.readFileSync(process.argv[1],'utf8');
 const code=text.slice(text.indexOf('function openRegionEditor(){'),text.indexOf("$('closeRegions').onclick"));
 for(const [current,documents,expected,disabled] of [
  [null,0,'新建或选择',true],
- [{questions:[]},0,'上传原试卷',true],
+ [{questions:[]},0,'空白答题卡模板',true],
  [{questions:[]},1,'可先预览',true],
- [{questions:[{id:'q',rule_config:{region:{page:2}}}]},1,'空白位置',false]
+ [{questions:[{id:'q',rule_config:{region:{page:2}}}]},1,'填写答案的位置',false]
 ]){
  const elements={};let loads=0;
  const $=id=>elements[id]??=( {options:id==='regionDocument'?Array(documents):[],value:'q',open:false,
@@ -153,7 +153,7 @@ for(const [current,documents,expected,disabled] of [
  assert.equal($('saveRegion').disabled,disabled);assert.equal(loads,current&&documents?1:0);
  if(!disabled)assert.equal($('regionPage').value,'2');
  $('regionPrepare').onclick();
- const target=!current?'newAssessment':!documents?'paperFiles':!current.questions.length?'generate':'editRegions';
+ const target=!current?'newAssessment':!documents?'paperFiles':!current.questions.length?'extractQuestions':'editRegions';
  assert($(target).focused);
 }
 """
@@ -165,7 +165,7 @@ def test_home_disables_stale_html_cache():
     with TestClient(app) as client:
         response = client.get('/')
         assert response.headers['cache-control'] == 'no-store'
-        assert 'layout-ready-v8' in response.text
+        assert 'answer-card-v9' in response.text
 
 
 def test_region_pointer_modes_scale_and_work_before_questions():

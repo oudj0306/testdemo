@@ -48,10 +48,10 @@ def create_layout_template(assessment_id: str, payload: LayoutGenerate):
     if not assessment:
         raise HTTPException(404, '试卷不存在')
     with transaction() as db:
-        row = db.execute('SELECT * FROM assessment_documents WHERE assessment_id=? AND id=? AND kind=\'question_paper\'',
+        row = db.execute('SELECT * FROM assessment_documents WHERE assessment_id=? AND id=? AND kind=\'answer_sheet\'',
                          (assessment_id,payload.document_id)).fetchone()
     if not row:
-        raise HTTPException(404, '请选择本试卷的原卷或作为原卷上传的空白答题卡')
+        raise HTTPException(404, '请上传并选择资料类型为“空白答题卡模板”的文件；原试卷不作为答题卡定位来源')
     try:
         return generate_layout(assessment,dict(row),get_settings(),payload.force)
     except ValueError as exc:

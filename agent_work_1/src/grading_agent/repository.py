@@ -193,6 +193,8 @@ def publish_assessment(assessment_id: str) -> dict[str, Any]:
         count = connection.execute("SELECT COUNT(*) FROM questions WHERE assessment_id=?", (assessment_id,)).fetchone()[0]
         if not count:
             raise ValueError("至少录入一道题后才能发布")
+        if connection.execute("SELECT 1 FROM questions WHERE assessment_id=? AND answer_key_state='missing'", (assessment_id,)).fetchone():
+            raise ValueError("题目结构已就绪，但参考答案尚未配置；请独立生成或录入答案后发布")
         cursor = connection.execute(
             "UPDATE assessments SET status='published', published_at=? WHERE id=?",
             (utc_now(), assessment_id),
@@ -204,6 +206,8 @@ def publish_assessment(assessment_id: str) -> dict[str, Any]:
 
 def confirm_assessment_answer_keys(assessment_id: str) -> dict[str, Any]:
     with transaction() as connection:
+        if connection.execute("SELECT 1 FROM questions WHERE assessment_id=? AND answer_key_state='missing'", (assessment_id,)).fetchone():
+            raise ValueError("仍有题目没有参考答案，不能将题目提取结果确认为答案")
         cursor = connection.execute(
             "UPDATE questions SET answer_key_state='verified' WHERE assessment_id=?",
             (assessment_id,),
