@@ -376,3 +376,33 @@ def test_old_saved_invalid_template_is_blocked_without_remote_fallback(workspace
     assert state['enabled'] and state['stale'] and state['warnings']
     student=upload(workspace,mark(source))
     assert not student['responses'] and student['status']=='extraction_failed' and len(calls)==1
+
+
+@pytest.mark.parametrize('bad,expected',[
+    ({'page':2,'x':.1,'y':.5,'width':.7,'height':.12},'第 2 页，答题卡共 1 页'),
+    ({'page':1,'x':.8,'y':.5,'width':.3,'height':.12},'x=0.8'),
+])
+def test_invalid_layout_reports_question_and_coordinates(bad,expected):
+    value=draft()
+    value['items'][1]['regions']=[bad]
+    questions=[{'id':'choice','question_no':'一-1','scoring_mode':'choice_set'},
+               {'id':'text','question_no':'二-1','scoring_mode':'numeric'}]
+    with pytest.raises(ValueError) as error:templates.validate_layout(value,questions,1)
+    assert '二-1' in str(error.value) and expected in str(error.value)
+    assert '未启用本次结果' in str(error.value)
+
+
+def test_template_request_limits_page_numbers_and_defines_box_size(workspace,monkeypatch):
+    previous=templates.request_json
+    captured=[]
+    def request(req,*args):
+        payload=json.loads(req.data)
+        schema=payload['text']['format']['schema']
+        assert schema['$defs']['Box']['properties']['page']['maximum']==1
+        instruction=payload['input'][0]['content'][0]['text']
+        assert '不是右下角坐标' in instruction and 'width<=1-x' in instruction
+        captured.append(True)
+        return previous(req,*args)
+    monkeypatch.setattr(templates,'request_json',request)
+    generate(workspace)
+    assert captured==[True]

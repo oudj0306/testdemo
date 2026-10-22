@@ -23,11 +23,11 @@ VERSION = 'local-layout-v1'
 
 class Box(BaseModel):
     model_config = ConfigDict(extra='forbid', allow_inf_nan=False)
-    page: int = Field(ge=1, le=100)
-    x: float = Field(ge=0, lt=1)
-    y: float = Field(ge=0, lt=1)
-    width: float = Field(gt=0, le=1)
-    height: float = Field(gt=0, le=1)
+    page: int = Field(ge=1, le=100, description='答题卡图片页码，从1开始；只能使用输入中存在的页')
+    x: float = Field(ge=0, lt=1, description='左边界除以当前图片宽度，不是中心点')
+    y: float = Field(ge=0, lt=1, description='上边界除以当前图片高度，不是中心点')
+    width: float = Field(gt=0, le=1, description='区域宽度除以图片宽度，不是右边界；x+width必须<=1')
+    height: float = Field(gt=0, le=1, description='区域高度除以图片高度，不是下边界；y+height必须<=1')
 
 
 class Option(BaseModel):
@@ -103,10 +103,16 @@ def validate_layout(value, questions, page_count):
         if qid not in allowed or qid in seen:
             raise ValueError('模板返回未知或重复题目标识，未启用本次结果')
         seen.add(qid)
-        boxes = item['regions'] + [o['box'] for o in item['options']]
-        for b in boxes:
-            if b['page'] > page_count or b['x'] + b['width'] > 1.000001 or b['y'] + b['height'] > 1.000001:
-                raise ValueError('模板坐标越界或页码不存在，未启用本次结果')
+        boxes = [(f'作答区 {i+1}', b) for i,b in enumerate(item['regions'])]
+        boxes += [(f'选项 {o["label"]}', o['box']) for o in item['options']]
+        for label,b in boxes:
+            location = f"题号 {allowed[qid]['question_no']} / {label}"
+            if b['page'] > page_count:
+                raise ValueError(f"模板页码不存在：{location} 返回第 {b['page']} 页，答题卡共 {page_count} 页；未启用本次结果")
+            if b['x'] + b['width'] > 1.000001 or b['y'] + b['height'] > 1.000001:
+                raise ValueError(f"模板坐标越界：{location}，第 {b['page']} 页，"
+                                 f"x={b['x']:g}、y={b['y']:g}、宽={b['width']:g}、高={b['height']:g}；"
+                                 '左边界+宽、上边界+高必须不超过1。未启用本次结果')
         if item['method'] == 'omr':
             if allowed[qid]['scoring_mode'] != 'choice_set':
                 raise ValueError('填涂模板仅适用于 choice_set 选择题')
@@ -187,7 +193,7 @@ def _generate_layout(assessment, document, settings, force):
                 buf = io.BytesIO()
                 image.save(buf, 'PNG')
                 pages.append({'page': page.page_no, 'path': str(output), 'width': image.width, 'height': image.height})
-                content += [{'type':'input_text','text':f'空白答题卡第 {page.page_no} 页；坐标均归一化至本页 0～1。'},
+                content += [{'type':'input_text','text':f'空白答题卡第 {page.page_no} 页，共 {len(doc.pages)} 页；当前图片 {image.width}×{image.height} 像素，坐标均归一化至本图片 0～1。'},
                             {'type':'input_image','image_url':'data:image/png;base64,' + base64.b64encode(buf.getvalue()).decode(), 'detail':'high'}]
         index = [{k:q.get(k) for k in ('id','question_no','prompt','question_type','scoring_mode')} for q in assessment['questions']]
         content.insert(0, {'type':'input_text','text': '固定题目清单：' + encode_json(index)})
@@ -196,11 +202,16 @@ def _generate_layout(assessment, document, settings, force):
                        '定位学生实际填写区域，排除题干、印刷答案与页眉。跨页或小问可返回多个 regions，按作答顺序排列。'
                        '选择题若是填涂卡，method=omr，为所有实际选项提供 label 和紧贴气泡或方框的 box（不要框标签文字）；'
                        '若填写字母而非填涂，method=text。其他题 method=text，options=[]。'
+                       '坐标x、y是区域左上角；width、height是宽高，不是右下角坐标，不是像素或百分数。'
+                       '必须满足0<=x<1、0<=y<1、0<width<=1-x、0<height<=1-y；例如x=.8时width最大为.2。'
+                       'page从1开始，严格对应输入图片页码，不使用原文件印刷页码；返回前逐项检查边界。'
                        '看不清或不能对应的题不输出，不能猜测坐标。只返回符合 schema 的 JSON。')
+        schema = LayoutDraft.model_json_schema()
+        schema['$defs']['Box']['properties']['page']['maximum'] = len(pages)
         payload = {'model': settings.openai_model, 'store':False, 'max_output_tokens':16384,
                    'input':[{'role':'developer','content':[{'type':'input_text','text':instruction}]},
                             {'role':'user','content':content}],
-                   'text':{'format':{'type':'json_schema','name':'answer_layout','strict':True,'schema':LayoutDraft.model_json_schema()}}}
+                   'text':{'format':{'type':'json_schema','name':'answer_layout','strict':True,'schema':schema}}}
         apply_provider_options(payload, settings.openai_base_url, settings.enable_thinking)
         data, _ = request_json(model_request(payload, settings), settings, 'layout_model', 180)
         usage = response_usage(data)
