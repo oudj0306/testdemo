@@ -75,8 +75,6 @@ async function loadAssessment(){
  await loadLayoutStatus(docs);
  $('questions').innerHTML=a.questions.length?a.questions.map(q=>'<details class="question" open><summary>'+esc(layoutQuestionLabel(q))+' · '+q.max_score+' 分 <span class="badge">'+(q.answer_key_state==='missing'?'未配置答案':q.answer_key_state==='candidate'?'待确认':'已确认')+'</span></summary><p>'+esc(q.prompt)+'</p><h3>参考答案</h3><pre>'+esc(typeof q.answer_key==='string'?q.answer_key:JSON.stringify(q.answer_key))+'</pre><h3>评分细则</h3>'+q.rubric.map(r=>'<p>'+esc(r.criterion)+' <b>'+esc(r.score)+' 分</b></p>').join('')+(q.rubric.length?'':'<p class="muted">根据标准答案及题目规则评分。</p>')+'</details>').join(''):'<p class="empty">先上传原试卷并识别题目；参考答案在独立步骤配置。</p>';
  setupRegionEditor(docs);
- $('exportTeacher').href='/api/assessments/'+a.id+'/training-samples?kind=teacher';
- $('exportPseudo').href='/api/assessments/'+a.id+'/training-samples?kind=pseudo';
  await submissions();
  await refreshBatches(a.id);
 }
