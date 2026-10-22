@@ -456,13 +456,15 @@ async function loadLayoutStatus(docs){
  $('previewLayout').disabled=!state.exists;$('toggleLayout').disabled=!state.exists;
  $('toggleLayout').textContent=state.enabled?'停用并恢复原识别路径':'启用本地模板';
  const deps=state.local_dependencies||{},missing=Object.entries(deps).filter(([_,v])=>!v).map(([k])=>k);
- $('layoutState').textContent=!current?.questions?.length?'先上传原试卷和空白答题卡模板。尚无题目时先提取题目结构，再匹配答题卡位置，两步模型请求均不生成参考答案。':state.enabled?(state.stale?'题目或来源已变更：请勾选重新生成；未更新前保留识别缺失，不回退视觉 API。':'模板已启用：'+state.items.length+' 道题，'+state.page_count+' 页。学生答卷仅本地识别；未定位或识别不确定的题保留缺分。'):'模板首次解析使用模型，重复点击复用有效模板；启用后不自动调用视觉 API。';
+ $('layoutState').textContent=!current?.questions?.length?'先上传原试卷和空白答题卡模板。尚无题目时先提取题目结构，再匹配答题卡位置，两步模型请求均不生成参考答案。':state.enabled?(state.stale?'题目或来源已变更：请勾选重新生成；未更新前保留识别缺失，不回退视觉 API。':'模板已启用：'+state.items.length+' 道题，'+state.page_count+' 页。学生答卷仅本地识别；未定位或识别不确定的题保留缺分。'):'请先预览来源，确认未作答且一张纸对应一页。首次解析使用模型；启用后学生答卷不自动调用视觉 API。';
  if(missing.length)$('layoutState').textContent+=' 当前服务缺少 '+missing.join(' / ')+'，请用优化版 GPU 环境启动。';
  if(state.warnings?.length)$('layoutState').textContent+=' '+state.warnings.join('；');
+ const failed=state.last_attempt;if(failed?.status==='rejected'&&failed.document_id===$('layoutDocument').value){$('layoutState').textContent+=' 上次检查：'+failed.error;if(!state.enabled)$('layoutBadge').textContent='来源待检查';}
  $('layoutQuestions').innerHTML=(state.items||[]).map(item=>{const q=current.questions.find(q=>q.id===item.question_id);return q?'<span class="layout-question-chip"><b>'+esc(item.section||'未分组')+'</b> / '+esc(item.number||q.question_no)+' · '+(item.method==='omr'?'填涂检测':'文字 OCR')+(item.confidence<.9?' · 待核对':'')+'</span>':'';}).join('');
 }
 function updateLayoutEntry(){
  const button=$('generateLayout');button.disabled=layoutBusy;
+ if(layoutBusy)$('layoutBadge').textContent='正在检查并定位…';
  button.textContent=layoutBusy?'正在处理…':!current?.questions?.length?'识别题目并匹配答题卡':'匹配答题卡并启用模板';
  button.title=!current?'请先新建或选择试卷':!$('layoutDocument').options.length?'请先上传空白答题卡模板':!current.questions.length?'先提取原试卷题目结构，再定位答题卡；两步模型请求，不生成答案':'首次请求模型生成位置；有效模板直接复用';
 }
@@ -490,19 +492,24 @@ action('generateLayout',async()=>{
   $('layoutState').textContent='正在定位作答区与填涂位置，生成本地识别模板…';
   await api('/api/assessments/'+id+'/layout-template',json({document_id:documentId,force}));
   if(current?.id===id){$('forceLayout').checked=false;await loadAssessment();notice('答题卡模板已启用。请核对题号与位置；参考答案需在独立步骤配置。');}
- }catch(e){if(current?.id===id)$('layoutState').textContent=e.message;throw e;}
+ }catch(e){if(current?.id===id){$('layoutState').textContent=e.message;$('layoutBadge').textContent=activeLayout?.enabled?'生成失败 · 保留旧模板':'模板未通过检查';}throw e;}
  finally{layoutBusy=false;updateLayoutEntry();}
 });
 action('toggleLayout',async()=>{await api('/api/assessments/'+aid()+'/layout-template',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled:!activeLayout.enabled})});await loadLayoutStatus();});
-$('previewLayout').onclick=()=>{$('layoutPreviewPage').value='1';$('layoutPreviewDialog').showModal();$('loadLayoutPreview').click();};
+let layoutPreviewSource=false;
+$('previewLayoutSource').onclick=()=>{if(!$('layoutDocument').value){notice('请先上传并选择空白答题卡模板。',true);return;}layoutPreviewSource=true;$('layoutPreviewPage').value='1';$('layoutPreviewDialog').showModal();$('loadLayoutPreview').click();};
+$('previewLayout').onclick=()=>{layoutPreviewSource=false;$('layoutPreviewPage').value='1';$('layoutPreviewDialog').showModal();$('loadLayoutPreview').click();};
 $('closeLayoutPreview').onclick=()=>{$('layoutPreviewDialog').close();};
 action('loadLayoutPreview',async()=>{
  const page=Number($('layoutPreviewPage').value);if(!Number.isInteger(page)||page<1)throw Error('请输入有效页码');
- $('layoutPreviewStatus').textContent='正在加载标注页…';
- const response=await fetch('/api/assessments/'+aid()+'/layout-template/page?page='+page);
+ $('layoutPreviewTitle').textContent=layoutPreviewSource?'来源答题卡 · 输入检查':'自动模板 · 位置核对';
+ $('layoutPreviewHint').textContent=layoutPreviewSource?'确认图片未填写答案，一张纸对应一页；这里仅预览，不调用模型。':'蓝框为文字区域，绿框为填涂位置。请核对题号与实际位置。';
+ $('layoutPreviewImage').alt=layoutPreviewSource?'上传的来源答题卡原图':'自动模板区域标注预览';
+ $('layoutPreviewStatus').textContent=layoutPreviewSource?'正在加载来源图片…':'正在加载标注页…';
+ const response=await fetch('/api/assessments/'+aid()+(layoutPreviewSource?'/template-page?document_id='+encodeURIComponent($('layoutDocument').value)+'&page=':'/layout-template/page?page=')+page);
  if(!response.ok){const e=await response.json();$('layoutPreviewStatus').textContent=e.detail;throw Error(e.detail);}
  const url=URL.createObjectURL(await response.blob());const image=$('layoutPreviewImage');image.src=url;
- try{await image.decode();$('layoutPreviewStatus').textContent='第 '+page+' 页 · 自动定位结果';}finally{URL.revokeObjectURL(url);}
+ try{await image.decode();$('layoutPreviewStatus').textContent='第 '+page+' 页 · '+(layoutPreviewSource?'来源答题卡（仅预览，不调用模型）':'自动定位结果');}finally{URL.revokeObjectURL(url);}
 });
 
 function localRecognitionHtml(submission){

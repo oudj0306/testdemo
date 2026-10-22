@@ -43,9 +43,9 @@
     <div class="card local-layout-card">
       <div class="section-title"><div><span class="section-kicker">SET UP ONCE · READ LOCALLY</span><h2>2. 匹配答题卡作答位置</h2></div><span id="layoutBadge" class="badge neutral">尚未配置</span></div>
       <p class="muted">用原试卷提取的题目清单匹配空白答题卡的作答区与填涂位置，不生成参考答案。后续上传学生填写的同版答题卡，本地对齐并识别，固定答案按规则评分，主观题再调用文本评分模型。</p>
-      <div class="toolbar"><label>模板来源<select id="layoutDocument"></select></label><button id="generateLayout">匹配答题卡并启用模板</button><button id="previewLayout" class="secondary" disabled>预览自动区域</button><button id="toggleLayout" class="secondary" disabled>停用本地模板</button></div>
+      <div class="toolbar"><label>模板来源<select id="layoutDocument"></select></label><button id="previewLayoutSource" class="secondary">预览来源答题卡</button><button id="generateLayout">匹配答题卡并启用模板</button><button id="previewLayout" class="secondary" disabled>预览自动区域</button><button id="toggleLayout" class="secondary" disabled>停用本地模板</button></div>
       <label class="inline small"><input id="forceLayout" type="checkbox">重新请求模型生成（替换已有模板，会产生用量；不勾选则复用有效模板）</label>
-      <p id="layoutState" class="helper-note" role="status" aria-live="polite">分别上传原试卷和空白答题卡模板；题号来自原试卷，位置来自答题卡。参考答案在下方独立配置。</p>
+      <p id="layoutState" class="helper-note" role="status" aria-live="polite">必须使用同版未作答答题卡；一张纸对应一页，多张纸请逐页扫描为 PDF，不要上传已填答卷或拼图。题号来自原试卷，参考答案独立配置。</p>
       <div class="toolbar"><button id="editRegions" class="secondary">修正答题卡区域（手工框选）</button></div><div id="layoutQuestions" class="layout-question-groups"></div>
     </div>
       <div class="card standards-card"><div class="section-title"><div><span class="section-kicker">ANSWER STANDARD</span><h2>3. 参考答案与评分标准</h2></div><span class="count-label">03</span></div><div class="toolbar"><button id="generate">生成／读取参考答案</button><button id="fillMissing" class="secondary">补全缺失项</button></div><p class="helper-note">此步骤独立于答题卡定位。读取已上传的教师答案，或生成缺失答案，均需核对后确认；不会改动位置模板。</p><div id="questions"></div><div class="card-footer"><button id="confirm" class="secondary">确认答案与标准</button><button id="publish">发布试卷 →</button></div></div>
@@ -95,7 +95,7 @@
     <div class="region-card-actions"><button id="previewRegion" class="secondary">预览裁切</button><button id="saveRegion">保存区域</button></div>
   </section>
 </dialog>
-<dialog id="layoutPreviewDialog" class="optimization-dialog"><div class="toolbar"><h2>自动模板 · 位置核对</h2><button id="closeLayoutPreview" class="secondary">关闭</button></div><p>蓝框：文字作答区域；绿框：选择题填涂区域及选项。首次请核对题号与实际位置，错误的文字区域可用框选纠正。</p><div class="toolbar"><label>模板页码<input id="layoutPreviewPage" type="number" min="1" value="1"></label><button id="loadLayoutPreview">查看该页</button></div><p id="layoutPreviewStatus" role="status"></p><img id="layoutPreviewImage" alt="自动模板区域标注预览" style="width:100%"></dialog>
+<dialog id="layoutPreviewDialog" class="optimization-dialog"><div class="toolbar"><h2 id="layoutPreviewTitle">自动模板 · 位置核对</h2><button id="closeLayoutPreview" class="secondary">关闭</button></div><p id="layoutPreviewHint">蓝框：文字作答区域；绿框：选择题填涂区域及选项。首次请核对题号与实际位置，错误的文字区域可用框选纠正。</p><div class="toolbar"><label>模板页码<input id="layoutPreviewPage" type="number" min="1" value="1"></label><button id="loadLayoutPreview">查看该页</button></div><p id="layoutPreviewStatus" role="status"></p><img id="layoutPreviewImage" alt="自动模板区域标注预览" style="width:100%"></dialog>
 <dialog id="trainingDialog" class="optimization-dialog"><h2>批准训练样本</h2><p>请删除姓名和联系方式等身份信息。批准脱敏文本不代表确认机器评分；必须先保存人工复核，才能导出教师确认标签。</p><label>脱敏作答<textarea id="trainingText" rows="8"></textarea></label><label>批准人<input id="trainingApprover" maxlength="100"></label><label class="inline"><input id="trainingConsent" type="checkbox">我已检查脱敏文本，并批准用于训练数据导出</label><div class="toolbar"><button id="approveTraining">批准</button><button id="closeTraining" class="secondary">取消</button></div></dialog>
-<script src="/static/chart.umd.min.js"></script><script src="/static/app.js?v=20261022-answer-card-v9-ui10"></script>
+<script src="/static/chart.umd.min.js"></script><script src="/static/app.js?v=20261022-answer-card-v9-ui12"></script>
 </body></html>

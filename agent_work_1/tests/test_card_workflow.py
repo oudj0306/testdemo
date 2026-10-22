@@ -65,7 +65,7 @@ def test_card_template_does_not_generate_answers(monkeypatch):
             calls.append('layout')
             item=dict(question_id=question['id'],section='二、计算题',number='1',method='text',confidence=.99,
                 regions=[dict(page=1,x=.1,y=.1,width=.7,height=.2)],options=[])
-            return {'output_text':json.dumps({'items':[item]}),'usage':{}},'synthetic'
+            return {'output_text':json.dumps({'source_review':{'answer_content':'blank','composite_scan':False,'reason':'Synthetic blank sheet'},'items':[item]}),'usage':{}},'synthetic'
         monkeypatch.setattr(layout_templates,'request_json',model)
         r=client.post(base+'/layout-template',json={'document_id':card['id']})
         assert r.status_code==200,r.text

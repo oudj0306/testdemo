@@ -70,7 +70,7 @@ def main():
             dict(question_id=qs[1]['id'],section='二、填空题',number='1',method='text',confidence=.99,
                  regions=[b(.1,.5,.7,.12)],options=[])]}
         def fixed_layout(*args):
-            calls.append('fixture_template');return {'output_text':json.dumps(result),'usage':{}},'synthetic'
+            calls.append('fixture_template');result['source_review']={'answer_content':'blank','composite_scan':False,'reason':'Synthetic blank sheet'};return {'output_text':json.dumps(result),'usage':{}},'synthetic'
         with patch.object(templates,'request_json',side_effect=fixed_layout):
             for _ in range(2):
                 response=client.post(f"/api/assessments/{a['id']}/layout-template",json={'document_id':doc['id']})

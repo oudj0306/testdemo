@@ -35,7 +35,7 @@ def box(x,y,w,h):
 
 
 def draft(q1='choice',q2='text'):
-    return {'items':[
+    return {'source_review':{'answer_content':'blank','composite_scan':False,'reason':'Synthetic blank sheet'},'items':[
         dict(question_id=q1,section='一、选择题',number='1',method='omr',confidence=.99,
              regions=[box(.1,.14,.7,.19)],options=[dict(label=label,box=box(x/900,.2,.04,.03))
                 for label,x in zip('ABCD',[135,225,315,405])]),
@@ -406,3 +406,28 @@ def test_template_request_limits_page_numbers_and_defines_box_size(workspace,mon
     monkeypatch.setattr(templates,'request_json',request)
     generate(workspace)
     assert captured==[True]
+
+
+@pytest.mark.parametrize('review,expected',[
+    ({'answer_content':'filled','composite_scan':False,'reason':'Filled bubbles'},'未作答'),
+    ({'answer_content':'uncertain','composite_scan':False,'reason':'Illegible'},'无法确认'),
+    ({'answer_content':'blank','composite_scan':True,'reason':'Two physical sheets'},'拼图'),
+])
+def test_source_rejected_before_geometry_and_never_activated(workspace,monkeypatch,review,expected):
+    client,a,qs,doc,source,calls=workspace
+    result=draft(qs[0]['id'],qs[1]['id'])
+    result['source_review']=review
+    result['items'][1]['regions'][0]['width']=.99
+    monkeypatch.setattr(templates,'request_json',lambda *args:({'output_text':json.dumps(result),'usage':{'input_tokens':17}},'synthetic-rejected'))
+    response=client.post(f"/api/assessments/{a['id']}/layout-template",json={'document_id':doc['id']})
+    assert response.status_code==422 and expected in response.json()['detail']
+    assert not client.get(f"/api/assessments/{a['id']}/layout-template").json()['exists']
+    diagnostics=list(config.get_settings().data_dir.glob('layout-attempts/*/*.json'))
+    assert len(diagnostics)==1
+    attempt=json.loads(diagnostics[0].read_text(encoding='utf-8'))
+    assert attempt['status']=='rejected' and attempt['usage']['input_tokens']==17
+    assert 'base64' not in diagnostics[0].read_text(encoding='utf-8')
+    assert client.get(f"/api/assessments/{a['id']}/layout-template").json()['last_attempt']['input_rejected']
+    monkeypatch.setattr(templates,'request_json',lambda *args:pytest.fail('Rejected source must not be charged again'))
+    cached=client.post(f"/api/assessments/{a['id']}/layout-template",json={'document_id':doc['id']})
+    assert cached.status_code==422 and '未重复请求 API' in cached.json()['detail']

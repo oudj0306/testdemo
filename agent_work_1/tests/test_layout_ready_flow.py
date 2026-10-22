@@ -59,7 +59,7 @@ def test_empty_paper_prepares_questions_then_layout_without_manual_numbering(mon
             values=[dict(question_id=q['id'],section=q['question_no'].split('-')[0],number='1',method='text',
                          confidence=.99,regions=[dict(page=1,x=.1,y=.1+i*.3,width=.7,height=.2)],options=[])
                     for i,q in enumerate(get_assessment(a['id'])['questions'])]
-            return {'output_text':json.dumps({'items':values}),'usage':{}},'synthetic'
+            return {'output_text':json.dumps({'source_review':{'answer_content':'blank','composite_scan':False,'reason':'Synthetic blank sheet'},'items':values}),'usage':{}},'synthetic'
         monkeypatch.setattr(layout_templates,'request_json',model)
         response=client.post(f"/api/assessments/{a['id']}/layout-template",json={'document_id':doc['id']})
         assert response.status_code==200,response.text
