@@ -87,6 +87,7 @@ def local_recognition_preview(submission_id: str, question_id: str, part: int = 
             values=[transcribe(path,question,settings) for path in paths]
             result={**values[0],'text':'\n'.join(value['text'] for value in values),
                     'consistent':all(value['consistent'] for value in values),
+                    'blank_candidate':all(value.get('blank_candidate',False) for value in values),
                     'issues':list(dict.fromkeys(issue for value in values for issue in value['issues'])),
                     'requests':[request for value in values for request in value.get('requests',[])],
                     'region_results':values}

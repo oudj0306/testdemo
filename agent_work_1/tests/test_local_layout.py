@@ -236,7 +236,9 @@ def test_local_ocr_failure_retains_choice_and_missing_text(workspace,monkeypatch
     client,a,qs,doc,source,calls=workspace
     generate(workspace)
     monkeypatch.setattr('grading_agent.services.ingestion.OCRAdapter.extract',lambda *a:('',None,'paddleocr_failed'))
-    student=upload(workspace,mark(source))
+    written=mark(source)
+    ImageDraw.Draw(written).text((130,630),'unreadable',fill='black')
+    student=upload(workspace,written)
     assert len(student['responses'])==1 and student['responses'][0]['raw_text']=='B'
     assert student['normalization_report']['local_recognition']['missing']==['二-1']
     graded=client.post(f"/api/submissions/{student['id']}/grade").json()
@@ -267,7 +269,9 @@ def test_partial_local_recognition_can_finish_daily_batch(workspace,monkeypatch,
     client,a,qs,doc,source,calls=workspace
     generate(workspace)
     monkeypatch.setattr('grading_agent.services.ingestion.OCRAdapter.extract',lambda *a:('',None,'paddleocr_failed'))
-    student=upload(workspace,mark(source))
+    written=mark(source)
+    ImageDraw.Draw(written).text((130,630),'unreadable',fill='black')
+    student=upload(workspace,written)
     from grading_agent.services.batch_queue import BatchQueue,enqueue_saved
     from grading_agent.app import prepare_submission
     from grading_agent.repository import get_submission

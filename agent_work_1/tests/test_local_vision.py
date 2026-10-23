@@ -11,7 +11,7 @@ from test_local_layout import workspace,generate,upload,mark
 
 
 def candidate(text='for i in range(3)\n    print(i)',nodes=None,edges=None,uncertain=None):
-    return dict(text=text,nodes=nodes or [],edges=edges or [],uncertain=uncertain or [],has_deletions=False)
+    return dict(text=text,nodes=nodes or [],edges=edges or [],uncertain=uncertain or [],has_deletions=False,is_blank=False)
 
 
 @pytest.mark.parametrize('question,kind',[
@@ -54,6 +54,23 @@ def test_detected_deleted_answers_require_review_even_when_both_passes_agree(loc
     result=vision.transcribe(path,{'question_type':'numeric'},settings)
     assert result['text']=='6' and not result['consistent']
     assert any('划掉' in issue for issue in result['issues'])
+
+
+@pytest.mark.parametrize('kind',['text','flowchart','code'])
+def test_blank_needs_two_explicit_empty_observations(local_model,kind):
+    settings,path,calls,values=local_model
+    values[:]=[candidate(''),candidate('')]
+    for value in values:value['is_blank']=True
+    result=vision.transcribe(path,{'answer_form':kind},settings)
+    assert result['blank_candidate'] and result['consistent'] and not result['text']
+    assert 'blank_confirmed' not in result  # Pixel/layout proof is still required by the caller.
+
+
+def test_empty_model_output_without_explicit_blank_is_not_blank(local_model):
+    settings,path,calls,values=local_model
+    values[:]=[candidate(''),candidate('')]
+    result=vision.transcribe(path,{},settings)
+    assert not result['blank_candidate'] and not result['consistent']
 
 
 @pytest.fixture

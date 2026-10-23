@@ -38,7 +38,10 @@ def requires_model(question, response):
 def _grade_question(question, response, settings, submission_id, prepared=None):
     # Independent questions may run together; a question's stability passes
     # remain sequential and use the original stopping/review rules.
-    if question["scoring_mode"] in RULE_MODES:
+    if response and response.get('blank_confirmed') and not str(response.get('raw_text') or '').strip():
+        decision=GradeDecision(0.0,float(question['max_score']),ScoreState.REPRODUCIBLE_EXACT,False,['confirmed_blank'])
+        event('rule_grade')
+    elif question["scoring_mode"] in RULE_MODES:
         routed_question = {**question, 'rule_config': {**question.get('rule_config', {}), 'minimum_ocr_confidence': confidence_threshold(question, settings)}}
         decision = grade_with_rules(routed_question, response)
         event('rule_grade')

@@ -21,7 +21,10 @@ def apply_review_policy(decision, question, response, settings, submission_id):
         reasons.append('provisional_answer_key')
     if settings.grading_profile == 'exam' or settings.review_mode == 'strict' or question.get('rule_config', {}).get('force_review'):
         reasons.append('teacher_review_policy')
-    if response and response.get('extraction_source')=='local_vlm_consistent':
+    from .blank_detection import is_local_blank
+    if is_local_blank(response):
+        decision.evidence.append('local_blank_verified; not an OCR failure')
+    elif response and response.get('extraction_source')=='local_vlm_consistent':
         reasons.append('visual_transcription_spot_check')
         decision.evidence.append('local_visual_two_transcriptions_agree; not calibrated probability or teacher confirmation')
     elif response and response.get('extraction_source') != 'manual':

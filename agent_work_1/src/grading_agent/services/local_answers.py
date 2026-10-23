@@ -210,9 +210,12 @@ def recognize_answers(layout, pages, questions, settings):
                 source = 'local_layout_omr'
             else:
                 if settings.local_vision_enabled and vision_error:raise ValueError(vision_error)
-                texts, scores = [], []
+                texts, scores, blanks = [], [], []
                 parts=[]
                 joint_crops=[]
+                joint_references=[]
+                blank_reference=(layout.get('source_review') or {}).get('answer_content')=='blank'
+                from .blank_detection import blank_pixels,verify_blank_part
                 from .local_vision import kind_for
                 joint=settings.local_vision_enabled and len(item['regions'])>1 and kind_for(q) in {'code','flowchart'}
                 for b in item['regions']:
@@ -220,8 +223,9 @@ def recognize_answers(layout, pages, questions, settings):
                     x1,y1,x2,y2 = covered(b,image,metadata[b['page']])
                     crop = settings.crop_dir / (uuid4().hex+'.png')
                     Image.fromarray(image[y1:y2,x1:x2]).save(crop)
+                    reference=references[b['page']].crop((x1,y1,x2,y2)) if blank_reference else None
                     if joint:
-                        joint_crops.append(crop);continue
+                        joint_crops.append(crop);joint_references.append(reference);continue
                     if settings.local_vision_enabled:
                         from .local_vision import transcribe
                         part={'crop':crop.name,'text':'','consistent':False,'issues':[],
@@ -232,16 +236,26 @@ def recognize_answers(layout, pages, questions, settings):
                             with timed('local_visual_transcription'):
                                 value=transcribe(crop,q,settings)
                             part.update(value)
+                            verify_blank_part(part,[crop],[reference] if blank_reference else None)
                         except ValueError as exc:
                             part['issues']=[str(exc)]
                         # Keep all region candidates available for inspection, even if one failed verification.
-                        texts.append(part['text']);continue
+                        texts.append(part['text']);blanks.append(bool(part.get('blank_confirmed')));continue
                     with timed('local_layout_ocr'):
                         t,c,_ = adapter.extract(crop)
+                    if not t.strip():
+                        with Image.open(crop) as pixels:evidence=blank_pixels(pixels,reference)
+                        if evidence['confirmed']:
+                            texts.append('');blanks.append(True)
+                            parts.append({'crop':crop.name,'text':'','consistent':True,'issues':[],
+                                          'blank_confirmed':True,'blank_evidence':[evidence]})
+                            diagnostics['recognitions'][qid]={'parts':parts,'question_no':q['question_no']}
+                            continue
                     if not t.strip() or c is None or not math.isfinite(float(c)) or not 0 <= float(c) <= 1:
                         raise ValueError('OCR 未可靠提取完整作答，不能认定为空白')
                     texts.append(t)
                     scores.append(float(c))
+                    blanks.append(False)
                 if joint:
                     from .local_vision import transcribe
                     part={'crop':joint_crops[0].name,'crops':[p.name for p in joint_crops],
@@ -250,22 +264,26 @@ def recognize_answers(layout, pages, questions, settings):
                     try:
                         with timed('local_visual_transcription'):
                             part.update(transcribe(joint_crops,q,settings))
+                            verify_blank_part(part,joint_crops,joint_references if blank_reference else None)
                     except ValueError as exc:part['issues']=[str(exc)]
                     texts.append(part['text'])
+                    blanks.append(bool(part.get('blank_confirmed')))
                 if settings.local_vision_enabled:
                     issues=[issue for part in parts for issue in part['issues']]
                     if any(part.get('consistent') is not True for part in parts) and not issues:
                         issues.append('本地区域未通过转写核验')
                     if issues:raise ValueError('；'.join(dict.fromkeys(issues)))
-                    text,confidence,blank,source='\n'.join(texts),None,False,'local_vlm_consistent'
+                    blank=bool(blanks) and all(blanks)
+                    text,confidence,source=('' if blank else '\n'.join('[未作答]' if empty else t for t,empty in zip(texts,blanks))),None,('local_layout_blank' if blank else 'local_vlm_consistent')
                 else:
-                    text,confidence,blank,source = '\n'.join(texts),min(scores),False,'local_layout_ocr'
-                if q['scoring_mode']=='choice_set':
+                    blank=bool(blanks) and all(blanks)
+                    text,confidence,source = ('' if blank else '\n'.join('[未作答]' if empty else t for t,empty in zip(texts,blanks))),(min(scores) if scores else None),('local_layout_blank' if blank else 'local_layout_ocr')
+                if q['scoring_mode']=='choice_set' and not blank:
                     normalized = re_choice(text)
                     if normalized is None or (q['question_type']=='single_choice' and len(normalized)!=1):
                         raise ValueError('未识别到明确的选项字母')
                     text = normalized
-            if source!='local_vlm_consistent' and (confidence is None or confidence < max(.9, settings.review_confidence_threshold)):
+            if source not in {'local_vlm_consistent','local_layout_blank'} and (confidence is None or confidence < max(.9, settings.review_confidence_threshold)):
                 raise ValueError('识别不确定：浅涂、擦改、多涂或 OCR 置信度不足')
             output.append({'question_id':qid,'raw_text':text,'confidence':confidence,
                            'blank_confirmed':blank,'source':source})

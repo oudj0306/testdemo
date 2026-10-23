@@ -14,7 +14,7 @@ from uuid import uuid4
 from PIL import Image, ImageOps
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-VERSION='verbatim-v3-text-3'
+VERSION='verbatim-v4-blank'
 _lock=RLock()  # One resident inference at a time on an 8GB GPU.
 
 
@@ -39,9 +39,12 @@ class Transcription(BaseModel):
     edges: list[Edge] = Field(max_length=400)
     uncertain: list[str] = Field(max_length=100)
     has_deletions: bool
+    is_blank: bool
 
     @model_validator(mode='after')
     def valid_graph(self):
+        if self.is_blank and (self.text.strip() or self.nodes or self.edges or self.has_deletions):
+            raise ValueError('空白声明与已提取作答或涂改冲突')
         ids=[n.id for n in self.nodes]
         if len(ids)!=len(set(ids)) or any(e.source not in ids or e.target not in ids for e in self.edges):
             raise ValueError('流程图节点重复或箭头指向不存在的节点')
@@ -139,12 +142,15 @@ def transcribe(path,question,settings):
         paths=path if isinstance(path,(list,tuple)) else [path]
         if not paths or len(paths)>3:raise ValueError('复杂作答最多联合核验3个区域；更多区域需人工确认连续关系')
         images,originals=[],[]
+        short_text=kind=='text'
         for file in paths:
             with Image.open(file) as source:
+                short_text=short_text and source.height<=180 and source.width>=source.height*2
                 image=prepare_image(source,kind);images.append(image)
                 buf=io.BytesIO();image.save(buf,'PNG');originals.append(buf.getvalue())
         hashes=[hashlib.sha256(value).hexdigest() for value in originals]
-        identity={'version':VERSION,'model':model,'kind':kind,'verify':settings.local_vision_verify,
+        prediction_limit=512 if short_text else 4096
+        identity={'version':VERSION,'model':model,'kind':kind,'verify':settings.local_vision_verify,'prediction_limit':prediction_limit,
                   'image':hashes[0] if len(hashes)==1 else hashes}
         key=hashlib.sha256(json.dumps(identity,sort_keys=True).encode()).hexdigest()
         root=settings.data_dir/'local-vision-cache';root.mkdir(parents=True,exist_ok=True)
@@ -161,7 +167,9 @@ def transcribe(path,question,settings):
                 '流程图文字放在nodes，图外手写说明放text。没有图则nodes/edges=[]。'
                 '看不清、涂改无法判断、代码缩进或箭头连接无法确定，都写入uncertain，不猜测。'
                 'text中不添加Markdown代码围栏或转写说明。has_deletions表示图片内是否存在划掉或涂黑删除的作答：有则为true，无则为false。'
-                '仅返回JSON，字段text,nodes,edges,uncertain,has_deletions。当前区域类型：'+kind)
+                'is_blank只有亲眼确认完整区域没有学生作答、涂改或图形时才为true，此时text为空且nodes/edges为空。'
+                '看不清、漏字或无法判断时is_blank必须为false并写uncertain，不能把识别失败当空白。'
+                '仅返回JSON，字段text,nodes,edges,uncertain,has_deletions,is_blank。当前区域类型：'+kind)
         if len(paths)>1:
             prompt+=' 所有图片是同一学生同一题的连续作答区，按输入顺序联合转写。保留跨图代码缩进和图的连接，不重复编号节点；连续关系无法确定时写入uncertain，不能猜测。'
         if kind=='text':
@@ -180,7 +188,7 @@ def transcribe(path,question,settings):
             body={'model':settings.local_vision_model,'stream':False,'think':False,'keep_alive':'2m',
                   'messages':[{'role':'system','content':prompt+(' 本次逐字符检查符号、换行、缩进及箭头，独立转写，不修复学生错误。' if index else '')},
                               {'role':'user','content':'只转写此作答区。' if len(paths)==1 else '只转写这些按顺序排列的同题作答区。','images':pictures}],
-                  'format':Transcription.model_json_schema(),'options':{'temperature':0,'num_ctx':8192,'num_predict':4096}}
+                  'format':Transcription.model_json_schema(),'options':{'temperature':0,'num_ctx':8192,'num_predict':prediction_limit}}
             data=local_json(settings.local_vision_url,'/api/chat',body,timeout=600)
             if data.get('error'):raise ValueError('本地模型推理失败：'+str(data['error'])[:300])
             request={'id':uuid4().hex,'seconds':round(time.perf_counter()-start,3),
@@ -193,18 +201,20 @@ def transcribe(path,question,settings):
         issues=list(dict.fromkeys(u for v in values for u in v['uncertain']))
         if any(v['has_deletions'] for v in values):
             issues.append('检测到划掉或涂改作答，最终有效文字需人工核对；两次一致不代表已正确排除废弃内容')
-        if kind=='flowchart' and any(not v['nodes'] or not v['edges'] for v in values):issues.append('流程图节点或连接未完整提取')
-        if kind=='flowchart' or any(v['nodes'] or v['edges'] for v in values):
+        blank_candidate=len(values)==2 and all(v['is_blank'] for v in values)
+        if any(v['is_blank'] for v in values) and not blank_candidate:issues.append('两次识别未一致确认空白')
+        if not blank_candidate and kind=='flowchart' and any(not v['nodes'] or not v['edges'] for v in values):issues.append('流程图节点或连接未完整提取')
+        if not blank_candidate and (kind=='flowchart' or any(v['nodes'] or v['edges'] for v in values)):
             issues.append('流程图结构仅为候选，需人工核对全部节点与箭头；同模型两次一致不能验证结构完整性')
         if len(values)<2:issues.append('未执行第二次转写核验')
         elif canonical(values[0])!=canonical(values[1]):issues.append('两次转写存在差异，不能自动确定')
         text=render_text(values[0])
         if kind=='text' and re.match(r'^\s*[（(]\d{1,3}[)）]',text):
             issues.append('转写含小问编号前缀，可能混入印刷题号，需对照原图；不自动删除学生文字')
-        if not text.strip():issues.append('未提取到作答，不能自动认定为空白')
+        if not text.strip() and not blank_candidate:issues.append('未提取到作答，不能自动认定为空白')
         result={'text':text,'structured':values[0],'verification':values[1] if len(values)>1 else None,
                 'issues':issues,'consistent':not issues,'model':model,'cache_hit':False,'requests':requests,
-                'kind':kind,'version':VERSION}
+                'kind':kind,'version':VERSION,'blank_candidate':blank_candidate and not issues}
         temporary=root/(uuid4().hex+'.tmp')
         try:
             temporary.write_text(json.dumps(result,ensure_ascii=False),encoding='utf-8');temporary.replace(cache)

@@ -117,6 +117,10 @@ def reusable_answer_ids(questions, responses, settings):
         # Empty and unconfirmed is an extraction gap, not a student's blank answer.
         if text_present == blank_confirmed:
             continue
+        from .blank_detection import is_local_blank
+        if is_local_blank(response):
+            reusable.add(question_id)
+            continue
         if response.get('extraction_source')=='local_vlm_consistent' and text_present and not blank_confirmed:
             reusable.add(question_id)
             continue
