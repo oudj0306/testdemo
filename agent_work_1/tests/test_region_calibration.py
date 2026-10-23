@@ -3,7 +3,7 @@ import copy
 from PIL import Image, ImageDraw
 import pytest
 
-from grading_agent.services.region_geometry import calibrate_regions
+from grading_agent.services.region_geometry import calibrate_regions, padded_frame
 from test_local_layout import workspace, generate, box
 
 
@@ -14,7 +14,7 @@ def test_printed_rows_and_continuation_panel(tmp_path):
     d.rectangle((50,100,450,420),outline='black',width=2)
     items=[]
     for i,y in enumerate([170,230,290,350]):
-        d.line((80,y,420,y),fill='black',width=2)
+        d.line((80 if i==0 else 110,y,420,y),fill='black',width=2)
         items.append(dict(question_id=str(i),method='text',regions=[box(.1,(y-5)/1400,.3,.02)]))
     d.rectangle((550,500,950,1300),outline='black',width=2)
     items.append(dict(question_id='continued',method='text',regions=[box(.55,.36,.4,.12)]))
@@ -24,11 +24,25 @@ def test_printed_rows_and_continuation_panel(tmp_path):
     for i in range(4):
         b=calibrated[i]['regions'][0]
         assert b['y']<items[i]['regions'][0]['y']
-        assert abs(b['x']-.08)<.003 and b['width']>.33
+        assert b['x']<.08 and b['width']>.34
+        assert b['y']*1400 < [170,230,290,350][i]-60
+        assert (b['y']+b['height'])*1400 > [170,230,290,350][i]+2
     assert calibrated[-1]['regions'][0]['height']>.55
+    panel=calibrated[-1]['regions'][0]
+    assert panel['x']*1000<550 and panel['y']*1400<500
+    assert (panel['x']+panel['width'])*1000>950
+    assert (panel['y']+panel['height'])*1400>1300
+    repeated,_=calibrate_regions(calibrated,[dict(page=1,path=path)])
+    assert repeated==calibrated  # enlarged short rows must not turn into whole-panel crops
     assert items[-1]['regions'][0]['height']==.12  # caller untouched
     protected,_=calibrate_regions(items,[dict(page=1,path=path)],['continued'])
     assert protected[-1]==items[-1]
+
+
+def test_margin_at_page_edge_stays_inside_image():
+    assert padded_frame((0,0,1000,1400),1000,1400)==dict(x=0,y=0,width=1,height=1)
+    b=padded_frame((10,20,300,400),1000,1400)
+    assert b==dict(x=.007,y=17/1400,width=.306,height=406/1400)
 
 
 def test_no_frame_keeps_candidates(tmp_path):
