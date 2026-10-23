@@ -58,7 +58,9 @@ def recognize(path, device='auto', retry_initialization=False, leading_number=Fa
                     engine = PaddleOCR(device=selected, text_detection_model_name='PP-OCRv5_mobile_det',
                                        text_recognition_model_name='PP-OCRv5_server_rec',
                                        use_doc_orientation_classify=False, use_doc_unwarping=False,
-                                       use_textline_orientation=False, text_rec_score_thresh=0.0)
+                                       use_textline_orientation=False, text_rec_score_thresh=0.0,
+                                       # Avoid the Windows Paddle PIR/oneDNN attribute conversion failure.
+                                       **({'enable_mkldnn':False} if selected=='cpu' else {}))
                 _engines[device] = (engine, selected)
             engine, selected = _engines[device]
             texts, scores = [], []

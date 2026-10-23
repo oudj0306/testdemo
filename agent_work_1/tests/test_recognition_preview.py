@@ -51,3 +51,14 @@ def test_preview_validates_question_part_and_crop_path(preview):
     submission['normalization_report']['local_recognition']['recognitions']['q']['parts'][0]['crop']='../outside.png'
     assert client.post(base+'q').status_code==404
     assert not calls
+
+
+def test_historical_joint_fill_in_crops_are_retried_independently(preview):
+    client,submission,calls,settings=preview
+    Image.new('RGB',(100,60),'white').save(settings.crop_dir/'second.png')
+    part=submission['normalization_report']['local_recognition']['recognitions']['q']['parts'][0]
+    part['crops']=['answer.png','second.png']
+    response=client.post('/api/submissions/s/local-recognition-preview?question_id=q')
+    assert response.status_code==200,response.text
+    assert [call[0] for call in calls]==[(settings.crop_dir/'answer.png').resolve(),(settings.crop_dir/'second.png').resolve()]
+    assert len(response.json()['region_results'])==2

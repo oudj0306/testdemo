@@ -11,7 +11,7 @@ from test_local_layout import workspace,generate,upload,mark
 
 
 def candidate(text='for i in range(3)\n    print(i)',nodes=None,edges=None,uncertain=None):
-    return dict(text=text,nodes=nodes or [],edges=edges or [],uncertain=uncertain or [])
+    return dict(text=text,nodes=nodes or [],edges=edges or [],uncertain=uncertain or [],has_deletions=False)
 
 
 @pytest.mark.parametrize('question,kind',[
@@ -45,6 +45,15 @@ def test_printed_number_is_not_silently_accepted_or_deleted(local_model):
     assert result['text']=='(2) 选择结构'
     assert not result['consistent']
     assert any('小问编号' in issue for issue in result['issues'])
+
+
+def test_detected_deleted_answers_require_review_even_when_both_passes_agree(local_model):
+    settings,path,calls,values=local_model
+    values[:]=[candidate('6'),candidate('6')]
+    for value in values:value['has_deletions']=True
+    result=vision.transcribe(path,{'question_type':'numeric'},settings)
+    assert result['text']=='6' and not result['consistent']
+    assert any('划掉' in issue for issue in result['issues'])
 
 
 @pytest.fixture

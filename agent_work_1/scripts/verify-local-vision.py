@@ -16,12 +16,26 @@ from grading_agent.services.local_vision import transcribe,runtime
 def main():
     parser=argparse.ArgumentParser()
     parser.add_argument('--assessment');parser.add_argument('--questions',default='二-2,五-1,四-1')
+    parser.add_argument('--cases-file',type=Path,help='Local JSON cases: name, path, question, expected; never used as training labels')
+    parser.add_argument('--model',help='Benchmark a downloaded local model without changing application settings')
     parser.add_argument('--output',default='output/local-vision-verification.json')
     args=parser.parse_args()
     settings=replace(get_settings(),local_vision_enabled=True)
+    if args.model:settings=replace(settings,local_vision_model=args.model)
     destination=Path(args.output);destination.parent.mkdir(parents=True,exist_ok=True)
     cases=[]
-    if args.assessment:
+    if args.cases_file:
+        if args.assessment:raise ValueError('Use either --assessment or --cases-file')
+        specifications=json.loads(args.cases_file.read_text(encoding='utf-8'))
+        if not isinstance(specifications,list) or not 1<=len(specifications)<=100:
+            raise ValueError('Expected 1 to 100 cases')
+        for spec in specifications:
+            path=Path(spec['path'])
+            if not path.is_absolute():path=args.cases_file.parent/path
+            # Human truth is only compared AFTER inference, never sent to the model.
+            question={k:v for k,v in spec.get('question',{}).items() if k in {'question_type','answer_form','prompt'}}
+            cases.append((spec['name'],path,question,spec.get('expected')))
+    elif args.assessment:
         assessment=get_assessment(args.assessment)
         if not assessment:raise ValueError('Assessment not found')
         layout=layout_status(assessment,_include_pages=True)

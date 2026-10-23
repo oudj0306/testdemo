@@ -14,7 +14,7 @@ from uuid import uuid4
 from PIL import Image, ImageOps
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-VERSION='verbatim-v3-text-1'
+VERSION='verbatim-v3-text-3'
 _lock=RLock()  # One resident inference at a time on an 8GB GPU.
 
 
@@ -38,6 +38,7 @@ class Transcription(BaseModel):
     nodes: list[Node] = Field(max_length=200)
     edges: list[Edge] = Field(max_length=400)
     uncertain: list[str] = Field(max_length=100)
+    has_deletions: bool
 
     @model_validator(mode='after')
     def valid_graph(self):
@@ -159,11 +160,13 @@ def transcribe(path,question,settings):
                 '有流程图时nodes和edges必须记录全部可见节点与箭头及分支标签，节点按从上到下、从左到右编号n1,n2等；'
                 '流程图文字放在nodes，图外手写说明放text。没有图则nodes/edges=[]。'
                 '看不清、涂改无法判断、代码缩进或箭头连接无法确定，都写入uncertain，不猜测。'
-                'text中不添加Markdown代码围栏或转写说明。仅返回JSON，字段text,nodes,edges,uncertain。当前区域类型：'+kind)
+                'text中不添加Markdown代码围栏或转写说明。has_deletions表示图片内是否存在划掉或涂黑删除的作答：有则为true，无则为false。'
+                '仅返回JSON，字段text,nodes,edges,uncertain,has_deletions。当前区域类型：'+kind)
         if len(paths)>1:
             prompt+=' 所有图片是同一学生同一题的连续作答区，按输入顺序联合转写。保留跨图代码缩进和图的连接，不重复编号节点；连续关系无法确定时写入uncertain，不能猜测。'
         if kind=='text':
             prompt+=' 本区域只识别手写文字、数字与标点，不解析程序或流程图。nodes和edges必须为空数组。逐字照抄，不能根据常见术语补字、改字或替换成正确答案；无法辨认的位置用[不清]并记录uncertain。横线不是减号，保留真实手写符号。左侧印刷的(1)、(2)等小问编号不是作答，绝不能放入text；如果编号本身是学生手写内容则保留，无法区分时记录uncertain。'
+            prompt+=' 只转写本栏最终有效作答：明确被横划线、叉线或涂黑删除的旧答案不进入text，旁边未划掉的新答案原样保留。不要把删除线或涂改笔迹解释成根号、分式或公式。无法判断是否已删除、哪一处是最终作答时必须写入uncertain。上下边缘露出的相邻栏残字不是本栏答案，无法确定归属时写入uncertain。'
         values,requests=[],[]
         for index in range(2 if settings.local_vision_verify else 1):
             pictures=[]
@@ -188,6 +191,8 @@ def transcribe(path,question,settings):
             try:values.append(Transcription.model_validate_json(data['message']['content']).model_dump())
             except (KeyError,ValueError) as exc:raise ValueError('本地转写结构无效，保留缺分') from exc
         issues=list(dict.fromkeys(u for v in values for u in v['uncertain']))
+        if any(v['has_deletions'] for v in values):
+            issues.append('检测到划掉或涂改作答，最终有效文字需人工核对；两次一致不代表已正确排除废弃内容')
         if kind=='flowchart' and any(not v['nodes'] or not v['edges'] for v in values):issues.append('流程图节点或连接未完整提取')
         if kind=='flowchart' or any(v['nodes'] or v['edges'] for v in values):
             issues.append('流程图结构仅为候选，需人工核对全部节点与箭头；同模型两次一致不能验证结构完整性')

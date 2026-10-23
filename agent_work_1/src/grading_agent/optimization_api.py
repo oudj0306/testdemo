@@ -66,7 +66,7 @@ def local_recognition_crop(submission_id: str, question_id: str, part: int = Que
 def local_recognition_preview(submission_id: str, question_id: str, part: int = Query(0,ge=0)):
     """Re-transcribe a saved crop without changing responses, grades or human labels."""
     from .repository import get_submission
-    from .services.local_vision import transcribe
+    from .services.local_vision import transcribe,kind_for
     settings=get_settings()
     if not settings.local_vision_enabled:raise HTTPException(409,'请先启用本地视觉识别')
     submission=get_submission(submission_id)
@@ -81,7 +81,16 @@ def local_recognition_preview(submission_id: str, question_id: str, part: int = 
     paths=[(settings.crop_dir/name).resolve() for name in names]
     if any(not p.is_relative_to(settings.crop_dir.resolve()) or not p.is_file() for p in paths):
         raise HTTPException(404,'裁切不可访问')
-    try:result=transcribe(paths,question,settings)
+    try:
+        if len(paths)>1 and kind_for(question)=='text':
+            # Historical reports grouped fill-in blanks as code; re-read each blank separately.
+            values=[transcribe(path,question,settings) for path in paths]
+            result={**values[0],'text':'\n'.join(value['text'] for value in values),
+                    'consistent':all(value['consistent'] for value in values),
+                    'issues':list(dict.fromkeys(issue for value in values for issue in value['issues'])),
+                    'requests':[request for value in values for request in value.get('requests',[])],
+                    'region_results':values}
+        else:result=transcribe(paths,question,settings)
     except ValueError as exc:raise HTTPException(422,str(exc)) from exc
     return {'preview_only':True,'writes_grades':False,'question_id':question_id,'part':part,**result}
 

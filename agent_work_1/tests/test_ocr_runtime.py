@@ -41,6 +41,16 @@ def test_forced_gpu_does_not_silently_use_cpu(monkeypatch):
     assert 'gpu:0' in ocr_runtime._errors
 
 
+def test_cpu_uses_compatible_backend_instead_of_broken_onednn_path(monkeypatch):
+    class Engine:
+        def __init__(self,**kwargs):
+            if kwargs.get('enable_mkldnn',True):raise RuntimeError('PIR oneDNN failure')
+        def predict(self,path):return [{'res':{'rec_texts':['存储器'],'rec_scores':[.96]}}]
+    monkeypatch.setitem(sys.modules,'paddle',SimpleNamespace(is_compiled_with_cuda=lambda:False))
+    monkeypatch.setitem(sys.modules,'paddleocr',SimpleNamespace(PaddleOCR=Engine))
+    assert ocr_runtime.recognize('answer.png','cpu')==('存储器',.96,'paddleocr_cpu')
+
+
 def test_bad_image_does_not_disable_following_images(monkeypatch):
     class Engine:
         def predict(self, path):
