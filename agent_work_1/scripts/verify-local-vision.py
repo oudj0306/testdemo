@@ -1,0 +1,57 @@
+"""Local inference only; never create submissions, grades or training labels."""
+import argparse
+from dataclasses import replace
+import json
+from pathlib import Path
+import time
+
+from PIL import Image,ImageDraw,ImageFont
+
+from grading_agent.config import get_settings
+from grading_agent.repository import get_assessment
+from grading_agent.services.layout_templates import layout_status
+from grading_agent.services.local_vision import transcribe,runtime
+
+
+def main():
+    parser=argparse.ArgumentParser()
+    parser.add_argument('--assessment');parser.add_argument('--questions',default='二-2,五-1,四-1')
+    parser.add_argument('--output',default='output/local-vision-verification.json')
+    args=parser.parse_args()
+    settings=replace(get_settings(),local_vision_enabled=True)
+    destination=Path(args.output);destination.parent.mkdir(parents=True,exist_ok=True)
+    cases=[]
+    if args.assessment:
+        assessment=get_assessment(args.assessment)
+        if not assessment:raise ValueError('Assessment not found')
+        layout=layout_status(assessment,_include_pages=True)
+        selected=set(args.questions.split(','));pages={p['page']:p for p in layout['pages']}
+        for q in assessment['questions']:
+            if q['question_no'] not in selected:continue
+            item=next(i for i in layout['items'] if i['question_id']==q['id'])
+            for index,b in enumerate(item['regions']):
+                crop=destination.parent/(f"visual-case-{q['id']}-{index}.png")
+                with Image.open(pages[b['page']]['path']) as image:
+                    image.crop((int(b['x']*image.width),int(b['y']*image.height),int((b['x']+b['width'])*image.width),int((b['y']+b['height'])*image.height))).save(crop)
+                cases.append((q['question_no']+':'+str(index+1),crop,q,None))
+    else:
+        crop=destination.parent/'synthetic-verbatim-code.png'
+        image=Image.new('RGB',(700,240),'white');draw=ImageDraw.Draw(image)
+        font=ImageFont.truetype('C:/Windows/Fonts/consola.ttf',36)
+        expected='x = 3\nif x > 2:\n    print(x)'
+        draw.multiline_text((35,25),expected,font=font,fill='black',spacing=10);image.save(crop)
+        cases.append(('synthetic-code',crop,{'question_type':'code'},expected))
+    report={'runtime':runtime(settings),'remote_vision_requests':0,'writes_grades':False,'cases':[]}
+    for name,path,question,expected in cases:
+        started=time.perf_counter();result=transcribe(path,question,settings)
+        value={'case':name,'seconds':round(time.perf_counter()-started,3),'result':result}
+        if expected is not None:value['exact_match']=result['text']==expected
+        report['cases'].append(value)
+        destination.write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding='utf-8')
+        print(json.dumps({'case':name,'seconds':value['seconds'],'consistent':result['consistent'],
+                          'issues':result['issues'],'requests':len(result['requests']),
+                          'exact_match':value.get('exact_match')},ensure_ascii=True),flush=True)
+    print('Saved local diagnostics:',destination,flush=True)
+
+
+if __name__=='__main__':main()

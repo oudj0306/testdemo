@@ -316,7 +316,7 @@ action('testLlm',async()=>{const result=await api('/api/settings/test-connection
 action('saveRuntime',async()=>{const saved=await api('/api/settings');await api('/api/settings',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({model:saved.model,base_url:saved.base_url,llm_grading_passes:saved.llm_grading_passes,llm_extract_answers:saved.llm_extract_answers,enable_thinking:saved.enable_thinking,ocr_provider:$('ocrProvider').value,ocr_device:$('ocrDevice').value,local_ocr_first:$('localOcrFirst').checked})});await refreshHealth();notice('识别设置已保存。环境检查为可选，不影响远程模型流程。');});
 action('checkOcr',async()=>{const result=await api('/api/runtime/ocr-check',{method:'POST'});await refreshHealth();$('ocrCheckResult').textContent=result.ok?'实际设备：'+result.device+'；本次首次调用 '+result.durations_seconds[0]+' 秒，第二次 '+result.durations_seconds[1]+' 秒。'+result.message:result.message;notice(result.ok?'本地自检通过，当前服务中的 OCR 模型已预热。':'本地自检失败，请查看设备错误信息。',!result.ok);});
 function wrapTables(container){container.querySelectorAll('table').forEach(table=>{const wrapper=document.createElement('div');wrapper.className='table-scroll';wrapper.tabIndex=0;wrapper.setAttribute('aria-label','可横向滚动的数据表格');table.replaceWith(wrapper);wrapper.append(table);});}
-(async()=>{await Promise.all([refreshHealth(),assessments(),loadSettings()].map(p=>p.catch(e=>notice(e.message,true))));})();
+(async()=>{await Promise.all([refreshHealth(),assessments(),loadSettings(),loadLocalVision()].map(p=>p.catch(e=>notice(e.message,true))));})();
 
 function editableRegionQuestions(){return (current?.questions||[]).filter(q=>q.scoring_mode!=='choice_set'&&!['single_choice','multiple_choice'].includes(q.question_type));}
 function savedQuestionRegion(q){if(!q)return null;if(activeLayout?.exists)return activeLayout.items?.find(i=>i.question_id===q.id)?.regions?.[0]||null;return q.rule_config?.region||null;}
@@ -506,7 +506,7 @@ async function loadLayoutStatus(docs){
  if(missing.length)$('layoutState').textContent+=' 当前服务缺少 '+missing.join(' / ')+'，请用优化版 GPU 环境启动。';
  if(state.warnings?.length)$('layoutState').textContent+=' '+state.warnings.join('；');
  const failed=state.last_attempt;if(failed?.version==='local-layout-v3'&&failed?.status==='rejected'&&failed.document_id===$('layoutDocument').value){$('layoutState').textContent+=' 上次检查：'+failed.error;if(!state.enabled)$('layoutBadge').textContent='来源待检查';}
- $('layoutQuestions').innerHTML=(state.items||[]).map(item=>{const q=current.questions.find(q=>q.id===item.question_id),review=state.region_reviews?.[item.question_id];return q?'<span class="layout-question-chip"><b>'+esc(item.section||'未分组')+'</b> / '+esc(item.number||q.question_no)+' · '+(item.method==='omr'?'填涂检测':'文字 OCR')+' · '+item.regions.length+' 区'+(review?.source==='manual'?' · 已人工调整':review?.source==='printed_lines'?' · 已按边线校准，待核对':' · 候选待核对')+'</span>':'';}).join('');
+ $('layoutQuestions').innerHTML=(state.items||[]).map(item=>{const q=current.questions.find(q=>q.id===item.question_id),review=state.region_reviews?.[item.question_id];return q?'<span class="layout-question-chip"><b>'+esc(item.section||'未分组')+'</b> / '+esc(item.number||q.question_no)+' · '+(item.method==='omr'?'填涂检测':'作答内容识别')+' · '+item.regions.length+' 区'+(review?.source==='manual'?' · 已人工调整':review?.source==='printed_lines'?' · 已按边线校准，待核对':' · 候选待核对')+'</span>':'';}).join('');
 }
 action('calibrateLayout',async()=>{const state=await api('/api/assessments/'+aid()+'/layout-template/calibrate',json({}));await loadLayoutStatus();notice('本地校准 '+state.adjusted_items+' 题，未调用 API；请预览核对。');});
 function updateLayoutEntry(){
@@ -563,5 +563,14 @@ action('loadLayoutPreview',async()=>{
 function localRecognitionHtml(submission){
  const report=submission.normalization_report?.local_recognition;if(!report)return '';
  const missing=report.missing||[],warnings=report.warnings||[];
- return '<div class="local-recognition-note '+(missing.length?'incomplete':'')+'"><strong>本地答卷识别 · 未调用视觉 API</strong><p>'+(missing.length?'尚未可靠识别：'+missing.map(esc).join('、')+'。这些题保留缺分，可校正作答后重批。':'所有题均已有可靠识别或人工校正结果。')+'</p>'+(warnings.length?'<details><summary>识别详情</summary>'+warnings.slice(0,20).map(w=>'<p>'+esc(w)+'</p>').join('')+'</details>':'')+'</div>';
+ const candidates=Object.entries(report.recognitions||{}).map(([qid,value])=>'<details><summary>题号 '+esc(value.question_no)+' · 转写与原图核对</summary>'+value.parts.map((part,index)=>'<div class="transcription-part"><p>区域 '+(index+1)+' · '+esc(part.model?.model||'')+' · '+(part.consistent?'两次转写一致（未人工确认）':'待校正：'+(part.issues||[]).map(esc).join('；'))+'</p>'+(part.crops||[part.crop]).map((_,r)=>'<a target="_blank" rel="noopener" href="/api/submissions/'+encodeURIComponent(submission.id)+'/local-recognition-crop?question_id='+encodeURIComponent(qid)+'&part='+index+'&region='+r+'">查看原图裁切 '+(r+1)+' ↗</a>').join(' · ')+'<pre>'+esc(part.text)+'</pre>'+(part.verification&&!part.consistent?'<p>第二次转写：</p><pre>'+esc(JSON.stringify(part.verification,null,2))+'</pre>':'')+'</div>').join('')+'</details>').join('');
+ return '<div class="local-recognition-note '+(missing.length?'incomplete':'')+'"><strong>本地答卷识别 · 未调用远程视觉 API</strong><p>'+(missing.length?'尚未可靠识别：'+missing.map(esc).join('、')+'。这些题保留缺分，可校正作答后重批。':'所有题均已有通过当前校验或人工校正的识别结果；模型一致仍可能出错。')+'</p>'+(warnings.length?'<details><summary>识别详情</summary>'+warnings.slice(0,20).map(w=>'<p>'+esc(w)+'</p>').join('')+'</details>':'')+candidates+'</div>';
 }
+
+async function loadLocalVision(){
+ const state=await api('/api/runtime/local-vision');$('localVisionEnabled').value=String(state.enabled);$('localVisionModel').value=state.model;
+ $('localVisionStatus').textContent=state.ready?'模型已就绪：'+state.model+' · '+(state.quantization||'')+'。两次转写一致不代表教师确认。':state.error;
+ return state;
+}
+action('checkLocalVision',async()=>{await loadLocalVision();});
+action('saveLocalVision',async()=>{const state=await api('/api/runtime/local-vision',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled:$('localVisionEnabled').value==='true',model:$('localVisionModel').value.trim(),verify:true})});await loadLocalVision();notice(state.enabled?'已启用本地视觉转写；仅影响后续未可靠识别题目，不修改已有成绩。':'已恢复原有 OCR 路径。');});

@@ -1,4 +1,4 @@
-param([int]$Port = 8001, [switch]$InitDbOnly, [switch]$CheckOcr, [switch]$PrintRuntime, [string]$PythonExe = '')
+param([int]$Port = 8001, [switch]$InitDbOnly, [switch]$CheckOcr, [switch]$PrintRuntime, [string]$PythonExe = '', [string]$DataDir = '')
 $ErrorActionPreference = 'Stop'
 $projectPath = $PSScriptRoot
 # Reusing the running workspace avoids an accidental second server on the same port.
@@ -41,9 +41,10 @@ $names = @('PYTHONPATH','GRADING_DATA_DIR','PADDLE_PDX_CACHE_HOME','HF_HOME')
 $saved = @{}
 foreach ($name in $names) { $saved[$name] = [Environment]::GetEnvironmentVariable($name, 'Process') }
 Push-Location -LiteralPath $projectPath
+$visionStarted = $null
 try {
     $env:PYTHONPATH = Join-Path $projectPath 'src'
-    $env:GRADING_DATA_DIR = Join-Path $projectPath 'data'
+    $env:GRADING_DATA_DIR = if ($DataDir) { [IO.Path]::GetFullPath($DataDir) } else { Join-Path $projectPath 'data' }
     foreach ($root in $roots) {
         if (Test-Path -LiteralPath (Join-Path $root '.cache\paddlex\official_models')) {
             if (-not $env:PADDLE_PDX_CACHE_HOME) { $env:PADDLE_PDX_CACHE_HOME = Join-Path $root '.cache\paddlex' }
@@ -58,12 +59,36 @@ try {
     } elseif ($InitDbOnly) {
         & $pythonExe -m grading_agent.cli --init-db
     } else {
+        $needsVision = & $pythonExe -c "from grading_agent.config import get_settings; print('1' if get_settings().local_vision_enabled else '0')"
+        if ($LASTEXITCODE -ne 0) { throw 'Cannot read local vision settings' }
+        if ($needsVision -eq '1') {
+            $visionReady = $null
+            try { $visionReady = Invoke-RestMethod 'http://127.0.0.1:11435/api/version' -TimeoutSec 2 } catch { }
+            if (-not $visionReady.version) {
+                $visionRoot = Join-Path $projectPath 'data/local-vision'
+                if (-not (Test-Path -LiteralPath (Join-Path $visionRoot 'runtime/ollama.exe'))) { throw 'Run setup-local-vision.ps1 first' }
+                $visionStarted = Start-Process pwsh -ArgumentList @('-NoProfile','-File',"$projectPath/start-local-vision.ps1") -WorkingDirectory $projectPath -WindowStyle Hidden -RedirectStandardOutput (Join-Path $visionRoot 'service.log') -RedirectStandardError (Join-Path $visionRoot 'service-error.log') -PassThru
+                for ($attempt=0; $attempt -lt 30; $attempt++) {
+                    try { $visionReady = Invoke-RestMethod 'http://127.0.0.1:11435/api/version' -TimeoutSec 2; break } catch { Start-Sleep -Seconds 1 }
+                }
+                if (-not $visionReady.version) { throw 'Local vision service did not start; check data/local-vision/service-error.log' }
+            }
+            Write-Host 'Local visual transcription enabled (loopback only; no remote vision fallback).'
+        }
         Write-Host "Python: $pythonExe"
         Write-Host "Data: $env:GRADING_DATA_DIR"
         & $pythonExe -m grading_agent.cli --host 127.0.0.1 --port $Port
     }
     if ($LASTEXITCODE -ne 0) { throw "Optimization service/check exited with code $LASTEXITCODE" }
 } finally {
+    if ($visionStarted) {
+        Get-CimInstance Win32_Process -Filter "ParentProcessId=$($visionStarted.Id)" | Where-Object { $_.CommandLine -like '*ollama.exe*serve*' } | ForEach-Object {
+            $ownedServer = $_
+            Get-CimInstance Win32_Process -Filter "ParentProcessId=$($ownedServer.ProcessId)" | Where-Object { $_.Name -in @('llama-server.exe','ollama.exe') } | ForEach-Object { Stop-Process -Id $_.ProcessId -ErrorAction SilentlyContinue }
+            Stop-Process -Id $ownedServer.ProcessId -ErrorAction SilentlyContinue
+        }
+        Stop-Process -Id $visionStarted.Id -ErrorAction SilentlyContinue
+    }
     foreach ($name in $names) { [Environment]::SetEnvironmentVariable($name, $saved[$name], 'Process') }
     Pop-Location
 }

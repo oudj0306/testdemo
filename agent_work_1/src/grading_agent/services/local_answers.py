@@ -1,7 +1,7 @@
 """Local page registration, reference-subtracted OMR and region OCR.
 
 Requires matching printed layouts. Low-quality alignment never becomes a blank.
-No model/network calls occur in this module.
+Optional local visual transcription uses a loopback-only service; never remote vision.
 """
 import math
 from pathlib import Path
@@ -183,6 +183,12 @@ def recognize_answers(layout, pages, questions, settings):
             warnings.append(f'第 {number} 页：{exc}')
     by_id = {q['id']:q for q in questions}
     adapter = OCRAdapter(settings.ocr_provider, settings.ocr_device)
+    vision_error=None
+    if settings.local_vision_enabled and any(i['method']=='text' and i['question_id'] in by_id for i in layout['items']):
+        from .local_vision import runtime
+        try:diagnostics['visual_runtime']=runtime(settings)
+        except ValueError as exc:vision_error=str(exc)
+    diagnostics['recognitions']={}
     prepared_marks = {}
     for item in layout['items']:
         qid = item['question_id']
@@ -203,31 +209,75 @@ def recognize_answers(layout, pages, questions, settings):
                 diagnostics['marks'][qid] = marks
                 source = 'local_layout_omr'
             else:
+                if settings.local_vision_enabled and vision_error:raise ValueError(vision_error)
                 texts, scores = [], []
+                parts=[]
+                joint_crops=[]
+                from .local_vision import kind_for
+                joint=settings.local_vision_enabled and len(item['regions'])>1 and kind_for(q) in {'code','flowchart'}
                 for b in item['regions']:
                     image = aligned[b['page']]
                     x1,y1,x2,y2 = covered(b,image,metadata[b['page']])
                     crop = settings.crop_dir / (uuid4().hex+'.png')
                     Image.fromarray(image[y1:y2,x1:x2]).save(crop)
+                    if joint:
+                        joint_crops.append(crop);continue
+                    if settings.local_vision_enabled:
+                        from .local_vision import transcribe
+                        part={'crop':crop.name,'text':'','consistent':False,'issues':[],
+                              'model':{'model':settings.local_vision_model}}
+                        parts.append(part)
+                        diagnostics['recognitions'][qid]={'parts':parts,'question_no':q['question_no']}
+                        try:
+                            with timed('local_visual_transcription'):
+                                value=transcribe(crop,q,settings)
+                            part.update(value)
+                        except ValueError as exc:
+                            part['issues']=[str(exc)]
+                        # Keep all region candidates available for inspection, even if one failed verification.
+                        texts.append(part['text']);continue
                     with timed('local_layout_ocr'):
                         t,c,_ = adapter.extract(crop)
                     if not t.strip() or c is None or not math.isfinite(float(c)) or not 0 <= float(c) <= 1:
                         raise ValueError('OCR 未可靠提取完整作答，不能认定为空白')
                     texts.append(t)
                     scores.append(float(c))
-                text,confidence,blank,source = '\n'.join(texts),min(scores),False,'local_layout_ocr'
+                if joint:
+                    from .local_vision import transcribe
+                    part={'crop':joint_crops[0].name,'crops':[p.name for p in joint_crops],
+                          'text':'','consistent':False,'issues':[],'model':{'model':settings.local_vision_model}}
+                    parts.append(part);diagnostics['recognitions'][qid]={'parts':parts,'question_no':q['question_no']}
+                    try:
+                        with timed('local_visual_transcription'):
+                            part.update(transcribe(joint_crops,q,settings))
+                    except ValueError as exc:part['issues']=[str(exc)]
+                    texts.append(part['text'])
+                if settings.local_vision_enabled:
+                    issues=[issue for part in parts for issue in part['issues']]
+                    if any(part.get('consistent') is not True for part in parts) and not issues:
+                        issues.append('本地区域未通过转写核验')
+                    if issues:raise ValueError('；'.join(dict.fromkeys(issues)))
+                    text,confidence,blank,source='\n'.join(texts),None,False,'local_vlm_consistent'
+                else:
+                    text,confidence,blank,source = '\n'.join(texts),min(scores),False,'local_layout_ocr'
                 if q['scoring_mode']=='choice_set':
                     normalized = re_choice(text)
                     if normalized is None or (q['question_type']=='single_choice' and len(normalized)!=1):
                         raise ValueError('未识别到明确的选项字母')
                     text = normalized
-            if confidence is None or confidence < max(.9, settings.review_confidence_threshold):
+            if source!='local_vlm_consistent' and (confidence is None or confidence < max(.9, settings.review_confidence_threshold)):
                 raise ValueError('识别不确定：浅涂、擦改、多涂或 OCR 置信度不足')
             output.append({'question_id':qid,'raw_text':text,'confidence':confidence,
                            'blank_confirmed':blank,'source':source})
             event('local_answer', details={'source':source})
         except (ValueError, KeyError, cv2.error) as exc:
             warnings.append(f"{q['question_no']}：{exc}")
+    parts=[p for item in diagnostics['recognitions'].values() for p in item['parts']]
+    requests={r['id']:r for p in parts for r in p.get('requests',[])}
+    diagnostics['local_model_usage']={'requests':len(requests),'cache_hits':sum(bool(p.get('cache_hit')) for p in parts),
+        'input_tokens':sum(r.get('input_tokens') or 0 for r in requests.values()) if all(r.get('input_tokens') is not None for r in requests.values()) else None,
+        'output_tokens':sum(r.get('output_tokens') or 0 for r in requests.values()) if all(r.get('output_tokens') is not None for r in requests.values()) else None,
+        'remote_vision_requests':0,'seconds':round(sum(r.get('seconds',0) for r in requests.values()),3)}
     return output,warnings,diagnostics
 
 

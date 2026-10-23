@@ -22,6 +22,46 @@ from .services.document_renderer import WORD_MEDIA, renderer_status, word_to_pdf
 router = APIRouter()
 
 
+class LocalVisionSettings(BaseModel):
+    enabled: bool
+    model: str = Field(default='qwen3-vl:4b-instruct',min_length=1,max_length=120,pattern=r'^[A-Za-z0-9._:/-]+$')
+    verify: bool = True
+
+
+@router.get('/api/runtime/local-vision')
+def local_vision_status():
+    from .services.local_vision import runtime
+    settings=get_settings()
+    result={'enabled':settings.local_vision_enabled,'model':settings.local_vision_model,
+            'verify':settings.local_vision_verify,'url':settings.local_vision_url}
+    try:return {**result,**runtime(settings)}
+    except ValueError as exc:return {**result,'ready':False,'error':str(exc)}
+
+
+@router.put('/api/runtime/local-vision')
+def local_vision_settings(payload: LocalVisionSettings):
+    from .config import update_local_vision
+    if 'cloud' in payload.model.lower():raise HTTPException(422,'本地识别禁止云端模型标签')
+    if payload.enabled and not payload.verify:raise HTTPException(422,'质量优先模式必须启用两次转写核验')
+    update_local_vision(payload.enabled,payload.model,payload.verify)
+    return local_vision_status()
+
+
+@router.get('/api/submissions/{submission_id}/local-recognition-crop')
+def local_recognition_crop(submission_id: str, question_id: str, part: int = Query(0,ge=0), region: int = Query(0,ge=0)):
+    from .repository import get_submission
+    from fastapi.responses import FileResponse
+    submission=get_submission(submission_id)
+    if not submission:raise HTTPException(404,'答卷不存在')
+    parts=submission.get('normalization_report',{}).get('local_recognition',{}).get('recognitions',{}).get(question_id,{}).get('parts',[])
+    if part>=len(parts):raise HTTPException(404,'裁切不存在')
+    crops=parts[part].get('crops') or [parts[part].get('crop','')]
+    if region>=len(crops):raise HTTPException(404,'区域不存在')
+    path=(get_settings().crop_dir/crops[region]).resolve()
+    if not path.is_relative_to(get_settings().crop_dir.resolve()) or not path.is_file():raise HTTPException(404,'裁切不可访问')
+    return FileResponse(path,media_type='image/png',headers={'Cache-Control':'no-store'})
+
+
 class LayoutGenerate(BaseModel):
     document_id: str = Field(min_length=1)
     force: bool = False

@@ -33,6 +33,10 @@ class Settings:
     review_sample_rate: float = 0.05
     review_confidence_threshold: float = 0.85
     grading_profile: str = "legacy"
+    local_vision_enabled: bool = False
+    local_vision_url: str = 'http://127.0.0.1:11435'
+    local_vision_model: str = 'qwen3-vl:4b-instruct'
+    local_vision_verify: bool = True
 
 
 def _data_dir() -> Path:
@@ -100,11 +104,24 @@ def get_settings() -> Settings:
         review_sample_rate=max(0.0, min(1.0, float(overrides.get("review_sample_rate", os.getenv('REVIEW_SAMPLE_RATE', '0.05'))))),
         review_confidence_threshold=float(overrides.get('review_confidence_threshold', 0.85)),
         grading_profile=str(overrides.get('grading_profile', 'legacy')),
+        local_vision_enabled=_as_bool(overrides.get('local_vision_enabled', False)),
+        local_vision_url=str(overrides.get('local_vision_url', 'http://127.0.0.1:11435')),
+        local_vision_model=str(overrides.get('local_vision_model', 'qwen3-vl:4b-instruct')),
+        local_vision_verify=_as_bool(overrides.get('local_vision_verify', True)),
     )
     for directory in (settings.data_dir, settings.upload_dir, settings.page_dir, settings.crop_dir):
         directory.mkdir(parents=True, exist_ok=True)
     _settings_cache = settings
     return settings
+
+
+def update_local_vision(enabled, model, verify=True):
+    global _settings_cache
+    overrides=_read_overrides()
+    overrides.update(local_vision_enabled=enabled,local_vision_model=model,local_vision_verify=verify)
+    _settings_file().write_text(json.dumps(overrides,ensure_ascii=False,indent=2),encoding='utf-8')
+    _settings_cache=None
+    return get_settings()
 
 
 def update_llm_settings(
