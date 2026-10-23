@@ -148,7 +148,7 @@ for(const [current,documents,expected,disabled] of [
  const elements={};let loads=0;
  const $=id=>elements[id]??=( {options:id==='regionDocument'?Array(documents):[],value:'q',open:false,
  showModal(){this.open=true;},click(){loads++;},close(){this.open=false;},scrollIntoView(){},focus(){this.focused=true;}} );
- const context={current,$,regionPageRequest:0};vm.createContext(context);vm.runInContext(text.slice(text.indexOf('function editableRegionQuestions(){'),text.indexOf('// Region coordinates always')),context);vm.runInContext(code+';openRegionEditor();',context);
+ const context={current,$,activeLayout:null,regionPageRequest:0,refreshRegionParts(){}};vm.createContext(context);vm.runInContext(text.slice(text.indexOf('function editableRegionQuestions(){'),text.indexOf('// Region coordinates always')),context);vm.runInContext(code+';openRegionEditor();',context);
  assert($('regionDialog').open);assert($('regionStatus').textContent.includes(expected));
  assert.equal($('saveRegion').disabled,disabled);assert.equal(loads,current&&documents?1:0);
  if(!disabled)assert.equal($('regionPage').value,'2');
@@ -188,6 +188,11 @@ canvas.onpointerdown(event(200,250));canvas.onpointerup(event(400,650));
 assert.equal(env.regionSelection.x,.2);assert.equal(env.regionSelection.y,.2);
 assert(Math.abs(env.regionSelection.width-.4)<1e-9);assert(Math.abs(env.regionSelection.height-.4)<1e-9);
 assert($('regionStatus').textContent.includes('尚无题目'));
+// Drag an existing box, then resize its bottom-right corner at CSS scale.
+canvas.onpointerdown(event(300,450));canvas.onpointermove(event(350,500));canvas.onpointerup(event(350,500));
+assert(Math.abs(env.regionSelection.x-.3)<1e-9);assert(Math.abs(env.regionSelection.y-.25)<1e-9);
+canvas.onpointerdown(event(450,700));canvas.onpointerup(event(500,800));
+assert(Math.abs(env.regionSelection.width-.5)<1e-9);assert(Math.abs(env.regionSelection.height-.5)<1e-9);
 $('regionMode').value='corners';$('regionMode').onchange();
 canvas.onpointerdown(event(400,650));assert($('regionStatus').textContent.includes('第一个角'));
 canvas.onpointerdown(event(200,250));assert(Math.abs(env.regionSelection.width-.4)<1e-9);

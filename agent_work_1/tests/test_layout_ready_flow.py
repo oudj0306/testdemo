@@ -132,10 +132,11 @@ def test_region_page_fit_and_width_fit_use_available_viewport():
     script=r"""
 const fs=require('fs'),vm=require('vm'),assert=require('assert');
 const text=fs.readFileSync(process.argv[1],'utf8'),elements={};
-const $=id=>elements[id]??={value:'page',clientWidth:1000,clientHeight:500,width:1000,height:2000,style:{}};
-const env={$,regionImage:{},window:{addEventListener(){}}};vm.createContext(env);
+const $=id=>elements[id]??={value:'page',clientWidth:1000,clientHeight:500,width:1000,height:2000,style:{},getBoundingClientRect(){return {width:964,height:1928}}};
+let draws=0;const env={$,regionImage:{},regionSelection:null,drawRegion(){draws++},window:{addEventListener(){}}};vm.createContext(env);
 vm.runInContext(text.slice(text.indexOf('function applyRegionScale(){'),text.indexOf('function regionPoint(')),env);
 vm.runInContext('applyRegionScale()',env);assert.equal($('regionCanvas').style.width,'232px');
 $('regionScale').value='width';$('regionScale').onchange();assert.equal($('regionCanvas').style.width,'964px');
+env.regionSelection={y:.4};$('regionScale').onchange();assert(Math.abs($('regionSurface').scrollTop-646.2)<.001);assert.equal(draws,3);
 """
     subprocess.run([node,'-e',script,str(source)],check=True,capture_output=True,text=True)

@@ -12,7 +12,7 @@ from PIL import Image, ImageOps
 import pypdfium2 as pdfium
 
 from .config import get_settings
-from .db import transaction, utc_now, decode_json
+from .db import transaction, utc_now, decode_json, encode_json
 from .repository import get_assessment, row_dict
 from .schemas import RegionInput, TrainingApproval
 from .services.ingestion import serialized_document_io
@@ -29,6 +29,85 @@ class LayoutGenerate(BaseModel):
 
 class LayoutSwitch(BaseModel):
     enabled: bool
+
+
+class RegionEdit(BaseModel):
+    expected_template_id: str
+    document_id: str
+    regions: list[RegionInput] = Field(max_length=20)
+    confirmed_indices: list[int] = Field(default_factory=list, max_length=20)
+
+
+@router.post('/api/assessments/{assessment_id}/layout-template/calibrate')
+def calibrate_layout(assessment_id: str):
+    from .services.layout_templates import layout_status, validate_layout
+    from .services.region_geometry import calibrate_regions
+    assessment=get_assessment(assessment_id)
+    if not assessment:
+        raise HTTPException(404,'试卷不存在')
+    state=layout_status(assessment, _include_pages=True)
+    if not state['exists'] or state['stale']:
+        raise HTTPException(409,'请先匹配有效的位置模板')
+    protected={qid for qid,r in state.get('region_reviews',{}).items() if r.get('source')=='manual'}
+    protected.update(q['id'] for q in assessment['questions'] if q.get('rule_config',{}).get('region'))
+    try:
+        items,adjusted=calibrate_regions(state['items'],state['pages'],protected)
+        validate_layout({'items':items,'source_review':state.get('source_review')},assessment['questions'],len(state['pages']))
+    except ImportError as exc:
+        raise HTTPException(422,'本地边线校准需要 OpenCV，请使用 GPU 环境启动') from exc
+    with transaction() as db:
+        db.execute('BEGIN IMMEDIATE')
+        row=db.execute('SELECT payload FROM assessment_layouts WHERE assessment_id=?',(assessment_id,)).fetchone()
+        content=decode_json(row['payload'],{}) if row else {}
+        if content.get('template_id')!=state['template_id'] or layout_status(get_assessment(assessment_id))['stale']:
+            raise HTTPException(409,'校准期间模板已变化，请刷新后重试')
+        content['items']=items
+        for qid in adjusted:
+            content.setdefault('region_reviews',{})[qid]={'source':'printed_lines','confirmed':[]}
+        content['template_id']=hashlib.sha256(encode_json(content).encode()).hexdigest()
+        db.execute('UPDATE assessment_layouts SET payload=? WHERE assessment_id=?',(encode_json(content),assessment_id))
+    return {**layout_status(assessment),'adjusted_items':len(adjusted)}
+
+
+@router.put('/api/assessments/{assessment_id}/layout-template/regions/{question_id}')
+def edit_layout_regions(assessment_id: str, question_id: str, payload: RegionEdit):
+    """Change geometry only; never overwrite question text, keys or rubrics."""
+    from .services.layout_templates import layout_status, validate_layout
+    from .services.region_geometry import region_key
+    assessment = get_assessment(assessment_id)
+    if not assessment:
+        raise HTTPException(404, '试卷不存在')
+    q = next((q for q in assessment['questions'] if q['id']==question_id), None)
+    if not q or q['scoring_mode']=='choice_set':
+        raise HTTPException(422, '请选择非选择题')
+    with transaction() as db:
+        db.execute('BEGIN IMMEDIATE')
+        row = db.execute('SELECT * FROM assessment_layouts WHERE assessment_id=?',(assessment_id,)).fetchone()
+        if not row:
+            raise HTTPException(404, '尚无模板，请先匹配答题卡')
+        content=decode_json(row['payload'], {})
+        if row['document_id']!=payload.document_id or content.get('template_id')!=payload.expected_template_id:
+            raise HTTPException(409, '模板或来源已变化，请重新打开区域后保存')
+        if any(i<0 or i>=len(payload.regions) for i in payload.confirmed_indices):
+            raise HTTPException(422, '确认区域编号不存在')
+        regions=[{k:b.model_dump()[k] for k in ('page','x','y','width','height')} for b in payload.regions]
+        old=next((i for i in content['items'] if i['question_id']==question_id), {})
+        items=[i for i in content['items'] if i['question_id']!=question_id]
+        if regions:
+            items.append(dict(question_id=question_id,section=old.get('section','人工校正'),number=old.get('number',q['question_no']),
+                              method='text',confidence=1.,regions=regions,options=[]))
+        try:
+            validate_layout({'items':items,'source_review':content.get('source_review')},assessment['questions'],len(content['pages']))
+        except ValueError as exc:
+            raise HTTPException(422,str(exc)) from exc
+        reviews=content.setdefault('region_reviews',{})
+        previous=reviews.get(question_id,{}).get('confirmed',[])
+        keys=[region_key(b) for b in regions]
+        reviews[question_id]={'source':'manual','confirmed':list(dict.fromkeys([k for k in previous if k in keys]+[keys[i] for i in payload.confirmed_indices]))}
+        content['items']=items
+        content['template_id']=hashlib.sha256(encode_json(content).encode()).hexdigest()
+        db.execute('UPDATE assessment_layouts SET payload=? WHERE assessment_id=?',(encode_json(content),assessment_id))
+    return layout_status(assessment)
 
 
 @router.get('/api/assessments/{assessment_id}/layout-template')

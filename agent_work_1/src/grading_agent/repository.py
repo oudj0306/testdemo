@@ -166,6 +166,7 @@ def update_question(question_id: str, data: dict[str, Any]) -> dict[str, Any]:
                                         'number':original_item.get('number',data['question_no']),'method':'text','confidence':1.,
                                         'regions':[{k:b[k] for k in ('page','x','y','width','height')}], 'options':[]})
             import hashlib
+            content.setdefault('region_reviews',{})[question_id]={'source':'manual','confirmed':[]}
             content['template_id'] = hashlib.sha256(encode_json(content['items']).encode()).hexdigest()
             connection.execute('UPDATE assessment_layouts SET payload=? WHERE assessment_id=?',
                                (encode_json(content),previous['assessment_id']))

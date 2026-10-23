@@ -1,0 +1,86 @@
+import copy
+
+from PIL import Image, ImageDraw
+import pytest
+
+from grading_agent.services.region_geometry import calibrate_regions
+from test_local_layout import workspace, generate, box
+
+
+def test_printed_rows_and_continuation_panel(tmp_path):
+    pytest.importorskip('cv2')
+    path=tmp_path/'sheet.png'
+    image=Image.new('RGB',(1000,1400),'white');d=ImageDraw.Draw(image)
+    d.rectangle((50,100,450,420),outline='black',width=2)
+    items=[]
+    for i,y in enumerate([170,230,290,350]):
+        d.line((80,y,420,y),fill='black',width=2)
+        items.append(dict(question_id=str(i),method='text',regions=[box(.1,(y-5)/1400,.3,.02)]))
+    d.rectangle((550,500,950,1300),outline='black',width=2)
+    items.append(dict(question_id='continued',method='text',regions=[box(.55,.36,.4,.12)]))
+    image.save(path)
+    calibrated,changed=calibrate_regions(items,[dict(page=1,path=path)])
+    assert len(changed)==5
+    for i in range(4):
+        b=calibrated[i]['regions'][0]
+        assert b['y']<items[i]['regions'][0]['y']
+        assert abs(b['x']-.08)<.003 and b['width']>.33
+    assert calibrated[-1]['regions'][0]['height']>.55
+    assert items[-1]['regions'][0]['height']==.12  # caller untouched
+    protected,_=calibrate_regions(items,[dict(page=1,path=path)],['continued'])
+    assert protected[-1]==items[-1]
+
+
+def test_no_frame_keeps_candidates(tmp_path):
+    pytest.importorskip('cv2')
+    path=tmp_path/'blank.png';Image.new('RGB',(1000,1400),'white').save(path)
+    items=[dict(question_id='q',method='text',regions=[box(.1,.2,.4,.2)])]
+    assert calibrate_regions(items,[dict(page=1,path=path)])==(items,set())
+
+
+def test_edit_multiple_regions_preserves_question_and_rejects_stale_writer(workspace):
+    client,a,qs,doc,*_=workspace
+    old=generate(workspace);qid=qs[1]['id'];url=f"/api/assessments/{a['id']}/layout-template/regions/{qid}"
+    before=client.get('/api/assessments/'+a['id']).json()['questions']
+    regions=[box(.1,.5,.3,.1),box(.5,.5,.3,.1)]
+    payload=dict(expected_template_id=old['template_id'],document_id=doc['id'],regions=regions,confirmed_indices=[0])
+    response=client.put(url,json=payload);assert response.status_code==200,response.text
+    new=response.json();assert new['confirmed_items']==0
+    assert next(i for i in new['items'] if i['question_id']==qid)['regions']==regions
+    assert client.put(url,json=payload).status_code==409
+    payload.update(expected_template_id=new['template_id'],confirmed_indices=[1])
+    confirmed=client.put(url,json=payload).json();assert confirmed['confirmed_items']==1
+    assert client.get('/api/assessments/'+a['id']).json()['questions']==before
+    # Removing one part retains the other part and its explicit confirmation.
+    payload.update(expected_template_id=confirmed['template_id'],regions=regions[1:],confirmed_indices=[])
+    removed=client.put(url,json=payload).json()
+    assert next(i for i in removed['items'] if i['question_id']==qid)['regions']==regions[1:]
+    assert removed['confirmed_items']==1
+
+
+@pytest.mark.parametrize('problem',['page','source','index','outside'])
+def test_bad_edit_is_atomic(workspace,problem):
+    client,a,qs,doc,*_=workspace
+    old=generate(workspace)
+    payload=dict(expected_template_id=old['template_id'],document_id=doc['id'],regions=[box(.1,.5,.4,.1)],confirmed_indices=[0])
+    if problem=='page':payload['regions'][0]['page']=2
+    if problem=='source':payload['document_id']='other'
+    if problem=='index':payload['confirmed_indices']=[2]
+    if problem=='outside':payload['regions'][0]['width']=1
+    response=client.put(f"/api/assessments/{a['id']}/layout-template/regions/{qs[1]['id']}",json=payload)
+    assert response.status_code in (409,422),response.text
+    assert client.get(f"/api/assessments/{a['id']}/layout-template").json()['template_id']==old['template_id']
+
+
+def test_recalibration_protects_manual_positions(workspace,monkeypatch):
+    client,a,qs,doc,*_=workspace
+    old=generate(workspace)
+    payload=dict(expected_template_id=old['template_id'],document_id=doc['id'],regions=[box(.1,.5,.4,.1)],confirmed_indices=[0])
+    assert client.put(f"/api/assessments/{a['id']}/layout-template/regions/{qs[1]['id']}",json=payload).status_code==200
+    def check(items,pages,protected):
+        assert qs[1]['id'] in protected
+        return copy.deepcopy(items),set()
+    monkeypatch.setattr('grading_agent.services.region_geometry.calibrate_regions',check)
+    response=client.post(f"/api/assessments/{a['id']}/layout-template/calibrate")
+    assert response.status_code==200,response.text
+    assert response.json()['confirmed_items']==1 and response.json()['adjusted_items']==0

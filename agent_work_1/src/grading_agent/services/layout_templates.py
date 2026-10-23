@@ -222,6 +222,10 @@ def layout_status(assessment, _include_pages=False):
             result['warnings'] = ['已存模板校验失败：' + str(exc)]
     # Never expose local paths from template storage to the web UI.
     result['page_count'] = len(result.get('pages', []))
+    from .region_geometry import region_key
+    reviews = result.get('region_reviews', {})
+    result['confirmed_items'] = sum(all(region_key(b) in reviews.get(i['question_id'], {}).get('confirmed', [])
+                                        for b in i['regions']) for i in result.get('items', []))
     if not _include_pages:
         result.pop('pages', None)
     return result
@@ -382,6 +386,12 @@ def _generate_layout(assessment, document, settings, force):
             check_source_review(parsed.get('source_review'))
             result = decode_model_layout(parsed, assessment['questions'], len(pages))
             result = refine_composite_choices(result,assessment['questions'],pages,settings,assessment['id'])
+            from .region_geometry import calibrate_regions
+            try:
+                result['items'], adjusted = calibrate_regions(result['items'], pages)
+                result['region_reviews'] = {qid:{'source':'printed_lines','confirmed':[]} for qid in adjusted}
+            except ImportError:
+                pass  # Optional OpenCV: keep model candidates explicitly unconfirmed.
             attempt['status'] = 'validated'
         except ValueError as exc:
             attempt.update(status='rejected', error=str(exc))
