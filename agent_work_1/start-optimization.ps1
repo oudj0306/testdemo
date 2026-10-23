@@ -1,6 +1,7 @@
 param([int]$Port = 8001, [switch]$InitDbOnly, [switch]$CheckOcr, [switch]$PrintRuntime, [string]$PythonExe = '', [string]$DataDir = '')
 $ErrorActionPreference = 'Stop'
 $projectPath = $PSScriptRoot
+. (Join-Path $projectPath 'scripts/local-vision-shell.ps1')
 # Reusing the running workspace avoids an accidental second server on the same port.
 if (-not ($InitDbOnly -or $CheckOcr -or $PrintRuntime)) {
     try {
@@ -67,7 +68,7 @@ try {
             if (-not $visionReady.version) {
                 $visionRoot = Join-Path $projectPath 'data/local-vision'
                 if (-not (Test-Path -LiteralPath (Join-Path $visionRoot 'runtime/ollama.exe'))) { throw 'Run setup-local-vision.ps1 first' }
-                $visionStarted = Start-Process pwsh -ArgumentList @('-NoProfile','-File',"$projectPath/start-local-vision.ps1") -WorkingDirectory $projectPath -WindowStyle Hidden -RedirectStandardOutput (Join-Path $visionRoot 'service.log') -RedirectStandardError (Join-Path $visionRoot 'service-error.log') -PassThru
+                $visionStarted = Start-Process -FilePath (Get-LocalVisionShell) -ArgumentList (Get-LocalVisionShellArguments -ScriptPath (Join-Path $projectPath 'start-local-vision.ps1')) -WorkingDirectory $projectPath -WindowStyle Hidden -RedirectStandardOutput (Join-Path $visionRoot 'service.log') -RedirectStandardError (Join-Path $visionRoot 'service-error.log') -PassThru
                 for ($attempt=0; $attempt -lt 30; $attempt++) {
                     try { $visionReady = Invoke-RestMethod 'http://127.0.0.1:11435/api/version' -TimeoutSec 2; break } catch { Start-Sleep -Seconds 1 }
                 }

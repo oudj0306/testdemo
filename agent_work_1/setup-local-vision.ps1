@@ -1,5 +1,6 @@
 param([string]$PythonExe='',[ValidatePattern('^[A-Za-z0-9][A-Za-z0-9._:/-]*$')][string]$Model='qwen3-vl:4b-instruct')
 $ErrorActionPreference='Stop'
+. (Join-Path $PSScriptRoot 'scripts/local-vision-shell.ps1')
 if($Model -match 'cloud'){throw 'Cloud models are not permitted'}
 $visionRoot=Join-Path $PSScriptRoot 'data/local-vision'
 if(-not $PythonExe){$candidateRoot=$PSScriptRoot;for($i=0;$i -lt 5 -and $candidateRoot;$i++){$candidate=Join-Path $candidateRoot '.venv-gpu/Scripts/python.exe';if(Test-Path -LiteralPath $candidate){$PythonExe=$candidate;break};$candidateRoot=Split-Path $candidateRoot -Parent}}
@@ -9,7 +10,7 @@ if($LASTEXITCODE -ne 0){throw 'Official portable runtime setup failed'}
 $serverStarted=$null
 try{
  try{$status=Invoke-RestMethod 'http://127.0.0.1:11435/api/version' -TimeoutSec 2}catch{
-  $serverStarted=Start-Process pwsh -ArgumentList @('-NoProfile','-File',"$PSScriptRoot/start-local-vision.ps1") -WorkingDirectory $PSScriptRoot -WindowStyle Hidden -PassThru
+  $serverStarted=Start-Process -FilePath (Get-LocalVisionShell) -ArgumentList (Get-LocalVisionShellArguments -ScriptPath (Join-Path $PSScriptRoot 'start-local-vision.ps1')) -WorkingDirectory $PSScriptRoot -WindowStyle Hidden -PassThru
   for($attempt=0;$attempt -lt 30;$attempt++){try{$status=Invoke-RestMethod 'http://127.0.0.1:11435/api/version' -TimeoutSec 2;break}catch{Start-Sleep -Seconds 1}}
  }
  if(-not $status.version){throw 'Local vision server did not start'}
