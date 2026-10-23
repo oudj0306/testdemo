@@ -563,14 +563,25 @@ action('loadLayoutPreview',async()=>{
 function localRecognitionHtml(submission){
  const report=submission.normalization_report?.local_recognition;if(!report)return '';
  const missing=report.missing||[],warnings=report.warnings||[];
- const candidates=Object.entries(report.recognitions||{}).map(([qid,value])=>'<details><summary>题号 '+esc(value.question_no)+' · 转写与原图核对</summary>'+value.parts.map((part,index)=>'<div class="transcription-part"><p>区域 '+(index+1)+' · '+esc(part.model?.model||'')+' · '+(part.consistent?'两次转写一致（未人工确认）':'待校正：'+(part.issues||[]).map(esc).join('；'))+'</p>'+(part.crops||[part.crop]).map((_,r)=>'<a target="_blank" rel="noopener" href="/api/submissions/'+encodeURIComponent(submission.id)+'/local-recognition-crop?question_id='+encodeURIComponent(qid)+'&part='+index+'&region='+r+'">查看原图裁切 '+(r+1)+' ↗</a>').join(' · ')+'<pre>'+esc(part.text)+'</pre>'+(part.verification&&!part.consistent?'<p>第二次转写：</p><pre>'+esc(JSON.stringify(part.verification,null,2))+'</pre>':'')+'</div>').join('')+'</details>').join('');
+ const candidates=Object.entries(report.recognitions||{}).map(([qid,value])=>'<details><summary>题号 '+esc(value.question_no)+' · 转写与原图核对</summary>'+value.parts.map((part,index)=>'<div class="transcription-part"><p>区域 '+(index+1)+' · '+esc(part.model?.model||'')+' · '+(part.consistent?'两次转写一致（未人工确认）':'待校正：'+(part.issues||[]).map(esc).join('；'))+'</p>'+(part.crops||[part.crop]).map((_,r)=>'<a target="_blank" rel="noopener" href="/api/submissions/'+encodeURIComponent(submission.id)+'/local-recognition-crop?question_id='+encodeURIComponent(qid)+'&part='+index+'&region='+r+'">查看原图裁切 '+(r+1)+' ↗</a>').join(' · ')+'<pre>'+esc(part.text)+'</pre>'+(part.verification&&!part.consistent?'<p>第二次转写：</p><pre>'+esc(JSON.stringify(part.verification,null,2))+'</pre>':'')+'<button type="button" class="secondary" data-local-retry="'+esc(submission.id)+'" data-question="'+esc(qid)+'" data-part="'+index+'">重新识别预览</button><div class="local-retry-result" aria-live="polite"></div></div>').join('')+'</details>').join('');
  return '<div class="local-recognition-note '+(missing.length?'incomplete':'')+'"><strong>本地答卷识别 · 未调用远程视觉 API</strong><p>'+(missing.length?'尚未可靠识别：'+missing.map(esc).join('、')+'。这些题保留缺分，可校正作答后重批。':'所有题均已有通过当前校验或人工校正的识别结果；模型一致仍可能出错。')+'</p>'+(warnings.length?'<details><summary>识别详情</summary>'+warnings.slice(0,20).map(w=>'<p>'+esc(w)+'</p>').join('')+'</details>':'')+candidates+'</div>';
 }
+
 
 async function loadLocalVision(){
  const state=await api('/api/runtime/local-vision');$('localVisionEnabled').value=String(state.enabled);$('localVisionModel').value=state.model;
  $('localVisionStatus').textContent=state.ready?'模型已就绪：'+state.model+' · '+(state.quantization||'')+'。两次转写一致不代表教师确认。':state.error;
  return state;
 }
+document.addEventListener('click',async event=>{
+ const button=event.target.closest('[data-local-retry]');if(!button||button.disabled)return;
+ const output=button.parentElement.querySelector('.local-retry-result');button.disabled=true;
+ output.textContent='正在用当前本地模型重新转写，仅预览，不修改作答与成绩…';
+ try{
+  const result=await api('/api/submissions/'+encodeURIComponent(button.dataset.localRetry)+'/local-recognition-preview?question_id='+encodeURIComponent(button.dataset.question)+'&part='+encodeURIComponent(button.dataset.part),{method:'POST'});
+  output.innerHTML='<p>新候选 · '+esc(result.model?.model)+' · '+esc(result.version)+' · '+(result.consistent?'通过当前校验，仍需核对原图':'待核对：'+(result.issues||[]).map(esc).join('；'))+'</p><pre>'+esc(result.text)+'</pre><p>仅预览候选。请对照原图，在作答编辑区保存校正内容；已有成绩未改变。</p>';
+ }catch(error){output.textContent=error.message;}finally{button.disabled=false;}
+});
+
 action('checkLocalVision',async()=>{await loadLocalVision();});
 action('saveLocalVision',async()=>{const state=await api('/api/runtime/local-vision',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled:$('localVisionEnabled').value==='true',model:$('localVisionModel').value.trim(),verify:true})});await loadLocalVision();notice(state.enabled?'已启用本地视觉转写；仅影响后续未可靠识别题目，不修改已有成绩。':'已恢复原有 OCR 路径。');});

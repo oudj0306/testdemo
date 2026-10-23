@@ -14,6 +14,39 @@ def candidate(text='for i in range(3)\n    print(i)',nodes=None,edges=None,uncer
     return dict(text=text,nodes=nodes or [],edges=edges or [],uncertain=uncertain or [])
 
 
+@pytest.mark.parametrize('question,kind',[
+    ({'question_type':'numeric','prompt':'程序代码的运行结果是'},'text'),
+    ({'question_type':'short_answer','prompt':'程序代码的三种基本结构是'},'text'),
+    ({'question_type':'short_answer','prompt':'写出下面程序的运行结果'},'text'),
+    ({'question_type':'programming','prompt':'求和'},'code'),
+    ({'prompt':'写python程序'},'code'),
+    ({'prompt':'画出程序的流程图'},'flowchart'),
+])
+def test_answer_kind_is_not_topic_kind(question,kind):
+    assert vision.kind_for(question)==kind
+
+
+def test_small_handwritten_line_is_enlarged_without_cutting_ink():
+    from PIL import ImageDraw
+    source=Image.new('RGB',(402,61),'white')
+    ImageDraw.Draw(source).rectangle((0,0,401,60),outline='black',width=2)
+    result=vision.prepare_image(source,'text')
+    assert result.size==(1118,224)
+    assert result.getpixel((0,0))==(255,255,255)
+    assert result.getpixel((32,32))==(0,0,0)
+    assert source.size==(402,61)
+    assert vision.prepare_image(source,'code').size==source.size
+
+
+def test_printed_number_is_not_silently_accepted_or_deleted(local_model):
+    settings,path,calls,values=local_model
+    values[:]=[candidate('(2) 选择结构'),candidate('(2) 选择结构')]
+    result=vision.transcribe(path,{'question_type':'short_answer'},settings)
+    assert result['text']=='(2) 选择结构'
+    assert not result['consistent']
+    assert any('小问编号' in issue for issue in result['issues'])
+
+
 @pytest.fixture
 def local_model(tmp_path,monkeypatch):
     settings=replace(config.get_settings(),local_vision_enabled=True)

@@ -14,7 +14,7 @@ from uuid import uuid4
 from PIL import Image, ImageOps
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-VERSION='verbatim-v2'
+VERSION='verbatim-v3-text-1'
 _lock=RLock()  # One resident inference at a time on an 8GB GPU.
 
 
@@ -87,11 +87,31 @@ def runtime(settings):
 
 
 def kind_for(question):
-    text=' '.join(str(question.get(k,'')) for k in ('question_type','answer_form','prompt'))
-    if re.search('流程图|flowchart',text,re.I):return 'flowchart'
-    if re.search('编程|程序代码|写.*(?:python|程序)|code|programming',text,re.I):return 'code'
-    if re.search('公式|formula',text,re.I):return 'formula'
+    # A question *about* code can require a number or a Chinese term as its answer.
+    form=str(question.get('answer_form','')).lower()
+    qtype=str(question.get('question_type','')).lower()
+    if form in {'flowchart','code','formula'}:return form
+    if qtype in {'programming','code'}:return 'code'
+    if qtype in {'numeric','true_false','single_choice','multiple_choice'}:return 'text'
+    text=str(question.get('prompt',''))
+    if re.search('(?:画|绘制|补全|设计).*流程图|flowchart',text,re.I):return 'flowchart'
+    if re.search(r'(?:编写|补全|完成).*程序|写\s*python\s*程序',text,re.I):return 'code'
+    if re.search('(?:写出|推导|填写).*公式|formula',text,re.I):return 'formula'
     return 'text'
+
+
+def prepare_image(source,kind):
+    image=ImageOps.exif_transpose(source).convert('RGB')
+    if kind=='text':
+        # Narrow handwriting crops otherwise reach the visual encoder with tiny glyphs.
+        # Resampling preserves existing pixels' content; it cannot recover missing strokes.
+        scale=min(4.,160/max(image.height,1),1984/max(image.width,1))
+        if scale>1:
+            image=image.resize((round(image.width*scale),round(image.height*scale)),Image.Resampling.LANCZOS)
+        image.thumbnail((1984,1984))
+        return ImageOps.expand(image,border=32,fill='white')
+    image.thumbnail((2048,2048))
+    return image
 
 
 def canonical(value):
@@ -120,7 +140,7 @@ def transcribe(path,question,settings):
         images,originals=[],[]
         for file in paths:
             with Image.open(file) as source:
-                image=source.convert('RGB');image.thumbnail((2048,2048));images.append(image)
+                image=prepare_image(source,kind);images.append(image)
                 buf=io.BytesIO();image.save(buf,'PNG');originals.append(buf.getvalue())
         hashes=[hashlib.sha256(value).hexdigest() for value in originals]
         identity={'version':VERSION,'model':model,'kind':kind,'verify':settings.local_vision_verify,
@@ -142,6 +162,8 @@ def transcribe(path,question,settings):
                 'text中不添加Markdown代码围栏或转写说明。仅返回JSON，字段text,nodes,edges,uncertain。当前区域类型：'+kind)
         if len(paths)>1:
             prompt+=' 所有图片是同一学生同一题的连续作答区，按输入顺序联合转写。保留跨图代码缩进和图的连接，不重复编号节点；连续关系无法确定时写入uncertain，不能猜测。'
+        if kind=='text':
+            prompt+=' 本区域只识别手写文字、数字与标点，不解析程序或流程图。nodes和edges必须为空数组。逐字照抄，不能根据常见术语补字、改字或替换成正确答案；无法辨认的位置用[不清]并记录uncertain。横线不是减号，保留真实手写符号。左侧印刷的(1)、(2)等小问编号不是作答，绝不能放入text；如果编号本身是学生手写内容则保留，无法区分时记录uncertain。'
         values,requests=[],[]
         for index in range(2 if settings.local_vision_verify else 1):
             pictures=[]
@@ -172,6 +194,8 @@ def transcribe(path,question,settings):
         if len(values)<2:issues.append('未执行第二次转写核验')
         elif canonical(values[0])!=canonical(values[1]):issues.append('两次转写存在差异，不能自动确定')
         text=render_text(values[0])
+        if kind=='text' and re.match(r'^\s*[（(]\d{1,3}[)）]',text):
+            issues.append('转写含小问编号前缀，可能混入印刷题号，需对照原图；不自动删除学生文字')
         if not text.strip():issues.append('未提取到作答，不能自动认定为空白')
         result={'text':text,'structured':values[0],'verification':values[1] if len(values)>1 else None,
                 'issues':issues,'consistent':not issues,'model':model,'cache_hit':False,'requests':requests,
