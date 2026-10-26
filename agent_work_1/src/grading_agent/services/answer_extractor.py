@@ -142,6 +142,7 @@ def extract_answers_with_model(
     *,
     target_question_nos: list[str] | None = None,
     answer_layout: str = "auto",
+    region_images: dict | None = None,
 ) -> list[dict[str, Any]]:
     validate_answer_layout(answer_layout)
     requested = None if target_question_nos is None else set(target_question_nos)
@@ -176,7 +177,20 @@ def extract_answers_with_model(
                     + json.dumps(ordered_targets, ensure_ascii=False, separators=(',', ':'))
                     + '。仍结合完整题目清单核对题号；未找到或看不清不得声明已确认空白，应降低 confidence。',
         })
-    if local_text is not None:
+    if region_images is not None:
+        from pathlib import Path
+        if requested is not None and set(region_images)!=requested:
+            raise ValueError('补识别区域必须与指定题号完全对应')
+        for number,paths in region_images.items():
+            if number not in allowed or not paths:raise ValueError('补识别区域不属于指定题目')
+            content.append({'type':'input_text','text':f'以下图片是题号 {number} 的完整作答区域，按顺序转写全部小问；划掉的旧答案不计入最终作答。'})
+            for path in paths:
+                image_path=Path(path).resolve()
+                if not image_path.is_relative_to(settings.crop_dir.resolve()) or not image_path.is_file():
+                    raise ValueError('补识别裁切不可访问')
+                encoded=base64.b64encode(image_path.read_bytes()).decode('ascii')
+                content.append({'type':'input_image','image_url':'data:image/png;base64,'+encoded,'detail':'high'})
+    elif local_text is not None:
         content.append({'type': 'input_text', 'text': '本地 OCR 转写（可能存在漏识别，无法可靠对应题号时降低 confidence，不得求解补全）：\n' + local_text})
     elif document.media_type == 'application/msword':
         content.append({'type': 'input_text', 'text': '学生 DOC 答卷：\n' + extract_doc_text(document.source_path)})
@@ -219,11 +233,20 @@ def extract_answers_with_model(
     except urllib.error.HTTPError as exc:
         detail = exc.read().decode("utf-8", errors="replace")[:800]
         raise RuntimeError(f"OpenAI HTTP {exc.code}: {detail}") from exc
-    output_text = response_output_text(data)
+    try:
+        output_text = response_output_text(data)
+    except RuntimeError as exc:
+        exc.usage=response_usage(data)
+        raise
     if not output_text:
-        raise RuntimeError("模型响应缺少 output_text")
+        error=RuntimeError("模型响应缺少 output_text");error.usage=response_usage(data)
+        raise error
     expected_questions = questions if requested is None else [item for item in questions if item['question_no'] in requested]
-    answers = validate_answers(parse_json_object(output_text)["answers"], expected_questions)
-    if requested is not None and {item['question_no'] for item in answers} != requested:
-        raise ValueError('识别结果缺少待识别题号，请重新识别或人工校对')
+    try:
+        answers = validate_answers(parse_json_object(output_text)["answers"], expected_questions)
+        if requested is not None and {item['question_no'] for item in answers} != requested:
+            raise ValueError('识别结果缺少待识别题号，请重新识别或人工校对')
+    except (ValueError,KeyError,TypeError) as exc:
+        error=ValueError(str(exc));error.usage=response_usage(data)
+        raise error from exc
     return answers, response_usage(data)

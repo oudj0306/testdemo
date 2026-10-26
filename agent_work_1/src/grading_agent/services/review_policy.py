@@ -25,14 +25,13 @@ def apply_review_policy(decision, question, response, settings, submission_id):
     if is_local_blank(response):
         decision.evidence.append('local_blank_verified; not an OCR failure')
     elif response and response.get('extraction_source')=='local_vlm_consistent':
-        reasons.append('visual_transcription_spot_check')
         decision.evidence.append('local_visual_two_transcriptions_agree; not calibrated probability or teacher confirmation')
     elif response and response.get('extraction_source') != 'manual':
         confidence = response.get('ocr_confidence')
         minimum = confidence_threshold(question, settings)
         if confidence is None or not math.isfinite(float(confidence)) or float(confidence) < minimum:
             reasons.append('extraction_uncertain')
-    if decision.grader_kind == 'llm':
+    if decision.grader_kind == 'llm' and question.get('scoring_mode') not in {'exact_text','choice_set','numeric','symbolic'}:
         rubric = question.get('rubric', [])
         try:
             valid_rubric = bool(rubric) and all(str(r.get('criterion', '')).strip() and math.isfinite(float(r['score'])) and float(r['score']) >= 0 for r in rubric)

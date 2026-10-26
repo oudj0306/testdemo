@@ -61,10 +61,20 @@ def test_targeted_output_retains_full_questions_and_original_image(monkeypatch, 
 def test_incomplete_or_wrong_target_cannot_be_accepted(monkeypatch, tmp_path, returned):
     calls = mock_model(monkeypatch, returned)
     document = IngestedDocument('hash', tmp_path / 'unused.png', 'image/png', [])
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError) as error:
         extract_answers_with_model(document, questions(), replace(get_settings(), openai_api_key='test'),
                                    local_text='2. 学生完整作答', target_question_nos=['2'])
     assert len(calls) == 1
+    assert error.value.usage['input_tokens']==100
+
+
+def test_empty_api_output_still_preserves_actual_usage(monkeypatch,tmp_path):
+    from grading_agent.services import answer_extractor
+    monkeypatch.setattr(answer_extractor.urllib.request,'urlopen',lambda *a,**kw:io.BytesIO(b'{"usage":{"input_tokens":9,"output_tokens":1}}'))
+    document=IngestedDocument('hash',tmp_path/'unused.png','image/png',[])
+    with pytest.raises(RuntimeError,match='output_text') as error:
+        extract_answers_with_model(document,questions(),replace(get_settings(),openai_api_key='test'),local_text='unknown')
+    assert error.value.usage['input_tokens']==9
 
 
 def test_empty_target_skips_model_and_file_read(monkeypatch, tmp_path):

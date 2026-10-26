@@ -76,13 +76,13 @@ def test_confirmed_blank_gets_zero_and_is_reused_without_scoring_api(workspace,m
 
 
 @pytest.mark.parametrize('mode',['faint','filled_reference','failure'])
-def test_writing_and_failed_ocr_never_become_zero(workspace,monkeypatch,mode):
+def test_uncertain_writing_and_failed_ocr_never_become_zero(workspace,monkeypatch,mode):
     client,a,qs,doc,source,calls=workspace;generate(workspace);enable_visual(monkeypatch)
     student=mark(source)
     ImageDraw.Draw(student).text((130,630),'1',fill=(245,245,245))
     def transcribe(*args):
         if mode=='failure':raise ValueError('识别失败')
-        return blank_result()
+        return {'text':'','consistent':False,'blank_candidate':False,'issues':['无法确认浅色笔迹'],'requests':[]}
     monkeypatch.setattr(vision,'transcribe',transcribe)
     if mode=='filled_reference':
         from grading_agent.services import local_answers

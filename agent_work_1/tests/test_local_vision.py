@@ -172,7 +172,8 @@ def test_integration_accepted_without_fake_confidence_and_rules_still_score(work
     assert student['normalization_report']['local_recognition']['missing']==[]
     graded=client.post(f"/api/submissions/{student['id']}/grade");assert graded.status_code==200,graded.text
     grade=next(g for g in graded.json()['grade_items'] if g['question_id']==qs[1]['id'])
-    assert grade['score']==5 and 'visual_transcription_spot_check' in grade['reason_codes']
+    assert grade['score']==5 and 'visual_transcription_spot_check' not in grade['reason_codes']
+    assert grade['final_score'] is None  # Adopted automatically, not a teacher grading label.
     assert len(calls)==1  # only mocked template request, no remote recognition
 
 

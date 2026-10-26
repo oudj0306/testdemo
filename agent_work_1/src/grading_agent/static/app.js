@@ -41,11 +41,12 @@ $('reviewOnly').onchange=()=>{if(!mayLeaveDraft()){$('reviewOnly').value=reviewV
 async function api(path, options={}) {const r=await fetch(path,options); const body=await r.json().catch(()=>({})); if(!r.ok) throw Error(typeof body.detail==='string'?body.detail:JSON.stringify(body.detail||'请求失败')); return body;}
 function notice(text,error=false){$('notice').textContent=text;$('notice').className=error?'error':'';}
 function action(id,fn){$(id).onclick=async()=>{const b=$(id);if(b.disabled)return;b.disabled=true;b.setAttribute('aria-busy','true');notice('正在处理，请稍候…');try{await fn();}catch(e){notice(e.message,true);}finally{b.disabled=false;b.removeAttribute('aria-busy');if(id==='generateLayout')updateLayoutEntry();if(id==='saveRegion')refreshRegionSaveButton();}};}
-function hasDraft(){return [...$('submissionBody').querySelectorAll('[data-initial]')].some(e=>e.value!==e.dataset.initial);}
-function mayLeaveDraft(){if(!hasDraft())return true;if(!confirm('当前有未保存的校对或复核内容。确定放弃修改并继续？'))return false;$('submissionBody').querySelectorAll('[data-initial]').forEach(e=>e.value=e.dataset.initial);return true;}
+function draftValue(e){return e.type==='checkbox'?String(e.checked):e.value;}
+function hasDraft(){return [...$('submissionBody').querySelectorAll('[data-initial]')].some(e=>draftValue(e)!==e.dataset.initial);}
+function mayLeaveDraft(){if(!hasDraft())return true;if(!confirm('当前有未保存的校对或复核内容。确定放弃修改并继续？'))return false;$('submissionBody').querySelectorAll('[data-initial]').forEach(e=>{if(e.type==='checkbox')e.checked=e.dataset.initial==='true';else e.value=e.dataset.initial;});return true;}
 window.addEventListener('beforeunload',e=>{if(hasDraft()){e.preventDefault();e.returnValue='';}});
 function aid(){if(!$('assessment').value) throw Error('请先新建或选择试卷');return $('assessment').value;}
-function requireSavedAnswers(){if(viewedSubmission&&[...document.querySelectorAll('[data-answer]')].some(t=>t.value!==(viewedSubmission.responses.find(r=>r.question_id===t.dataset.answer)?.raw_text||'')))throw Error('作答校对尚未保存，请先保存并重新批改，再复核新结果。');}
+function requireSavedAnswers(){if(viewedSubmission&&[...document.querySelectorAll('[data-answer]')].some(t=>{const r=viewedSubmission.responses.find(r=>r.question_id===t.dataset.answer);return t.value!==(r?.raw_text||'')||Boolean($('answerBlank')?.checked)!==Boolean(r?.blank_confirmed);}))throw Error('请先确认作答并判分，再确认该题评分。');}
 $('submissionBody').addEventListener('submit',e=>{try{requireSavedAnswers();}catch(error){e.preventDefault();e.stopImmediatePropagation();notice(error.message,true);}},true);
 $('submissionBody').addEventListener('click',e=>{if(e.target.id!=='bulkConfirm')return;try{requireSavedAnswers();}catch(error){e.preventDefault();e.stopImmediatePropagation();notice(error.message,true);}},true);
 function showPreview(kind,id){$('previewFrame').src='/api/preview/'+kind+'/'+id;$('preview').showModal();}
@@ -93,7 +94,7 @@ function renderSubmissions(){
  let rows=all.filter(s=>s.student_ref.toLocaleLowerCase().includes(term));
  const mode=$('sortMode').value;
  rows=sortList(rows,mode.startsWith('name')?'student_ref':'created_at',mode.endsWith('asc')?'asc':'desc');
- const pending=all.filter(s=>s.review_recommended_count>0||s.status==='review_required').length;
+ const pending=all.filter(s=>s.review_recommended_count>0||['review_required','uploaded','extracted','extraction_failed'].includes(s.status)).length;
  $('contextStats').innerHTML='<span><b>'+all.length+'</b>份答卷</span><span><b>'+all.filter(s=>['uploaded','extracted','extraction_failed'].includes(s.status)).length+'</b>待批阅</span><span><b>'+pending+'</b>建议复核</span>';
  $('reviewNavCount').hidden=!pending;$('reviewNavCount').textContent=pending;
  const empty='<div class="empty"><strong>'+ (term?'没有匹配的答卷':'还没有答卷')+'</strong>'+(term?'换个姓名或文件名试试。':'先在答卷收集页上传文件。')+'</div>';
@@ -102,11 +103,11 @@ function renderSubmissions(){
  const meta=s=>'<span class="avatar" aria-hidden="true">'+esc(s.student_ref.slice(0,1))+'</span><div class="student-meta"><strong>'+esc(s.student_ref)+'</strong><small>'+esc(new Date(s.created_at).toLocaleString())+(s.normalization_report?.answer_layout==='on_paper'?' · 卷面作答':s.normalization_report?.answer_layout==='answer_list'?' · 仅答案列表':'')+'</small></div>';
  $('uploadedList').innerHTML=pageSlice(rows,'upload').map(s=>'<div class="submission-row">'+meta(s)+badge(s)+'<div class="row-actions"><button class="secondary" data-source="'+s.id+'">预览</button><button class="text-button danger" data-del="'+s.id+'" '+(activeJobs.has(s.id)?'disabled title="处理中不能删除"':'')+'>删除</button></div></div>').join('')||empty;
  renderPager('uploadPager','upload',rows.length);
- $('gradingList').innerHTML=pageSlice(rows,'mark').map(s=>'<div class="submission-row">'+meta(s)+badge(s)+'<div class="row-actions">'+(['review_required','finalized'].includes(s.status)?'<button class="secondary" data-result="'+s.id+'">查看结果</button>':'<button class="secondary" data-source="'+s.id+'">原件</button>')+(['extraction_failed','review_required'].includes(s.status)?'<button class="text-button" data-retry="'+s.id+'" '+(activeJobs.has(s.id)?'disabled':'')+'>重试缺分题</button>':'')+'</div></div>').join('')||empty;
+ $('gradingList').innerHTML=pageSlice(rows,'mark').map(s=>'<div class="submission-row">'+meta(s)+badge(s)+'<div class="row-actions">'+('<button class="secondary" data-result="'+s.id+'">作答校对 / 复核</button>')+(['extraction_failed','review_required'].includes(s.status)?'<button class="text-button" data-retry="'+s.id+'" '+(activeJobs.has(s.id)?'disabled':'')+'>重试缺分题</button>':'')+'</div></div>').join('')||empty;
  renderPager('markPager','mark',rows.length);
  const filter=$('reviewFilter').value;
- const visible=rows.filter(s=>filter==='pending'?(s.review_recommended_count>0||s.status==='review_required'):filter==='reviewed'?s.review_count>0:['review_required','finalized'].includes(s.status));
- $('submissions').innerHTML=pageSlice(visible,'review').map(s=>'<button data-sub="'+s.id+'" class="'+(selected===s.id?'selected':'')+'">'+esc(s.student_ref)+'<small>'+esc(state(s))+' · '+(s.review_recommended_count||0)+' 题建议关注 · '+(s.review_count||0)+' 次复核</small></button>').join('')||'<p class="muted small">当前范围没有答卷。可切换“全部已出分答卷”。</p>';
+ const visible=rows.filter(s=>filter==='pending'?(s.review_recommended_count>0||['review_required','uploaded','extracted','extraction_failed'].includes(s.status)):filter==='reviewed'?s.review_count>0:true);
+ $('submissions').innerHTML=pageSlice(visible,'review').map(s=>'<button data-sub="'+s.id+'" class="'+(selected===s.id?'selected':'')+'">'+esc(s.student_ref)+'<small>'+esc(state(s))+' · '+(s.review_recommended_count||0)+' 题建议关注 · '+(s.review_count||0)+' 次复核</small></button>').join('')||'<p class="muted small">当前范围没有答卷。可切换“全部答卷”。</p>';
  renderPager('reviewPager','review',visible.length);
  document.querySelectorAll('#submissions [data-sub]').forEach(b=>b.onclick=()=>{if(!navigate('review'))return;openSubmission(b.dataset.sub).catch(e=>notice(e.message,true));});
  document.querySelectorAll('[data-result]').forEach(b=>b.onclick=()=>{
@@ -126,6 +127,25 @@ async function removeSubmission(id,button){
  button.disabled=true;
  try{await api('/api/submissions/'+id,{method:'DELETE'});if(selected===id){selected=null;viewedSubmission=null;rerenderCurrentQuestion=null;openRequest++;$('submissionBody').innerHTML='<div class="empty">答卷已删除，请选择其他答卷。</div>';$('studentTitle').textContent='选择一份答卷';}await submissions();notice('答卷记录已删除。');}catch(e){notice(e.message,true);button.disabled=false;}
 }
+function answerCandidate(submission,qid){
+ const report=submission.normalization_report?.local_recognition||{};
+ return report.api_fallback?.[qid]?.candidate?.raw_text??(report.recognitions?.[qid]?.parts||[]).map(p=>p.text||'').join('\n');
+}
+function answerRecognitionState(submission,q){
+ const r=submission.responses.find(r=>r.question_id===q.id);
+ if(r?.extraction_source==='manual'&&(r.raw_text?.trim()||r.blank_confirmed))return r.blank_confirmed?'人工确认未作答':'人工确认作答';
+ if(submission.normalization_report?.local_recognition?.missing?.includes(q.question_no))return answerCandidate(submission,q.id)?'候选待人工确认':'未可靠识别，可直接填写';
+ if(r?.blank_confirmed)return '自动识别未作答';
+ if(r?.raw_text?.trim())return r.extraction_source==='api_vision_fallback'?'API补识已采用':'已自动采用';
+ return answerCandidate(submission,q.id)?'候选待人工确认':'未可靠识别，可直接填写';
+}
+function answerOverviewHtml(submission,questions){
+ return '<details class="answer-overview" open><summary>全题作答校对 · '+questions.length+' 题（含未识别题）</summary><div class="table-scroll"><table><thead><tr><th>题号</th><th>识别状态</th><th>作答 / 待核对候选</th><th>操作</th></tr></thead><tbody>'+questions.map((q,i)=>{
+  const r=submission.responses.find(r=>r.question_id===q.id),text=r?.blank_confirmed?'[未作答]':r?.raw_text||answerCandidate(submission,q.id)||'尚未识别，请填写或确认未作答';
+  return '<tr><td>'+esc(q.question_no)+'</td><td>'+esc(answerRecognitionState(submission,q))+'</td><td class="answer-overview-text">'+esc(text.slice(0,180))+(text.length>180?'…':'')+'</td><td><button class="secondary" data-answer-question="'+i+'">校对本题</button></td></tr>';
+ }).join('')+'</tbody></table></div></details>';
+}
+
 async function openSubmission(id,{force=false}={}){
  if(!force&&!mayLeaveDraft())return;
  const request=++openRequest,assessmentId=aid();
@@ -139,7 +159,7 @@ async function openSubmission(id,{force=false}={}){
  let nav=[];
  const navigable=()=>questions.map((q,i)=>i).filter(i=>{const g=s.grade_items.find(g=>g.question_id===questions[i].id);return $('reviewOnly').value==='all'||!g||(g.needs_review&&g.final_score==null);});
  $('submissionBody').className='';
- $('submissionBody').innerHTML=localRecognitionHtml(s)+'<div class="toolbar review-actions"><button id="viewSource" class="secondary">查看答卷原件 ↗</button><button id="deleteSubmission" class="text-button danger">删除答卷</button></div><div class="metrics"><div class="metric"><b>'+fmt(currentScore)+'</b>当前成绩</div><div class="metric"><b>'+fmt(summary.max_score)+'</b>试卷满分</div><div class="metric"><b>'+fmt(summary.review_recommended_count)+'</b>建议复核</div></div><div id="bulkArea"></div><div class="question-nav"><button id="prevQ" class="secondary">← 上一题</button><select id="questionSelect" aria-label="选择题号"></select><button id="nextQ" class="secondary">下一题 →</button></div><div id="questionArea"></div><details id="reviewAudit" class="review-audit"><summary>查看批改与复核历史（'+history.reduce((n,g)=>n+g.reviews.length,0)+' 次复核）</summary><div id="auditBody"></div></details>';
+ $('submissionBody').innerHTML=localRecognitionHtml(s)+'<div class="toolbar review-actions"><button id="viewSource" class="secondary">查看答卷原件 ↗</button><button id="deleteSubmission" class="text-button danger">删除答卷</button></div><div class="metrics"><div class="metric"><b>'+fmt(currentScore)+'</b>当前成绩</div><div class="metric"><b>'+fmt(summary.max_score)+'</b>试卷满分</div><div class="metric"><b>'+fmt(summary.review_recommended_count)+'</b>建议复核</div></div><p class="helper-note">未出分 '+questions.filter(q=>!s.grade_items.some(g=>g.question_id===q.id&&(g.score!=null||g.final_score!=null))).length+' / '+questions.length+' 题；未识别题不会自动当作0分。</p><div id="bulkArea"></div><div id="answerOverview"></div><div class="question-nav"><button id="prevQ" class="secondary">← 上一题</button><select id="questionSelect" aria-label="选择题号"></select><button id="nextQ" class="secondary">下一题 →</button></div><div id="questionArea"></div><details id="reviewAudit" class="review-audit"><summary>查看批改与复核历史（'+history.reduce((n,g)=>n+g.reviews.length,0)+' 次复核）</summary><div id="auditBody"></div></details>';
  $('viewSource').onclick=()=>showPreview('submission',id);
  $('deleteSubmission').disabled=activeJobs.has(id);
  $('deleteSubmission').onclick=()=>removeSubmission(id,$('deleteSubmission'));
@@ -147,18 +167,36 @@ async function openSubmission(id,{force=false}={}){
  function renderQuestion(){
   const q=questions[viewedQuestionIndex];
   if(!q||!nav.length){$('questionArea').innerHTML='<div class="empty"><strong>当前没有建议复核题</strong>切换为“全卷复核”可以查看并调整任意题成绩。</div>';return;}
-  const r=s.responses.find(x=>x.question_id===q.id),g=s.grade_items.find(x=>x.question_id===q.id),reference=g?.snapshot?.question||q;
+  const r=s.responses.find(x=>x.question_id===q.id),candidate=answerCandidate(s,q.id),g=s.grade_items.find(x=>x.question_id===q.id),reference=g?.snapshot?.question||q;
   const answer=typeof reference.answer_key==='string'?reference.answer_key:JSON.stringify(reference.answer_key,null,2);
   const needs=!g||(g.needs_review&&g.final_score==null);
   const reasons=g?(needs?g.reason_codes.map(code=>reviewReasons[code]||code).join(' / '):g.final_score!=null?'已人工确认 · 可再次调整':'自动通过 · 非人工复核'):'尚未批阅';
-  $('questionArea').innerHTML='<div class="question"><b>第 '+esc(q.question_no)+' 题</b><p>'+esc(reference.prompt)+'</p><div class="answer-comparison"><div><label>学生作答<textarea data-answer="'+q.id+'" aria-label="学生作答校对">'+esc(r?.raw_text||'')+'</textarea></label><p class="muted small">可校对识别文字。修改后需保存并重新批阅。</p><button id="saveAnswers" class="text-button">保存本题校对</button></div><div><h3>参考答案'+(g?.snapshot?.question?' · 批改时版本':'')+'</h3><pre>'+esc(answer||'未提供参考答案')+'</pre><h3>评分标准</h3>'+(reference.rubric?.length?reference.rubric.map(rr=>'<p>'+esc(rr.criterion)+' <b>'+esc(rr.score)+' 分</b></p>').join(''):'<p class="muted">按标准答案和题目规则评分</p>')+'</div></div><p class="'+(needs?'pending':'score')+'">'+(g?'当前得分 '+fmt(g.effective_score)+' / '+g.max_score+(needs?' · 建议复核':' · 已出分'):'尚未批阅')+'</p><p class="muted small">'+esc(reasons)+'</p>'+(g?'<details><summary>展开评分依据</summary><pre>'+esc(g.evidence.join('\n'))+'</pre></details><form data-review="'+g.id+'"><div class="toolbar"><label>复核分数<input name="score" aria-label="复核分数" type="number" min="0" max="'+g.max_score+'" step="any" required></label><label style="flex:1">复核说明<input name="reason" aria-label="复核说明" placeholder="可选，建议改分时填写" style="width:100%" maxlength="1000"></label><button>'+(g.latest_review_id?'保存再次复核':'保存人工复核')+'</button></div></form>':'<p class="helper-note">先到智能批阅页处理答卷，再在这里复核成绩。</p>')+'</div>';
-  if(g){$('questionArea').querySelector('[name=score]').value=g.effective_score??'';const approve=document.createElement('button');approve.className='secondary';approve.textContent='脱敏并批准训练样本';approve.onclick=()=>openTraining(g,r);$('questionArea').append(approve);if(g.score_state==='AUTO_SINGLE'){const label=document.createElement('p');label.textContent='日常作业 · 单次自动评分（非双评一致）';$('questionArea').append(label);}}
-  $('questionArea').querySelectorAll('input,textarea').forEach(e=>e.dataset.initial=e.value);
-  action('saveAnswers',async()=>{
-   const input=$('questionArea').querySelector('[data-answer]');
-   if(input.value===(r?.raw_text||'')){notice('作答未改动，无需保存。');return;}
-   await api('/api/submissions/'+id+'/answers',json({answers:[{question_id:q.id,raw_text:input.value}]}));
-   await openSubmission(id,{force:true});notice('本题校对已保存，请到智能批阅页重新批阅。其他题目成绩保留。');
+  $('questionArea').innerHTML='<div class="question"><b>第 '+esc(q.question_no)+' 题</b><p>'+esc(reference.prompt)+'</p><div class="answer-comparison"><div><label>学生作答<textarea data-answer="'+q.id+'" aria-label="学生作答校对">'+esc(r?.blank_confirmed?'':r?.raw_text||candidate||'')+'</textarea></label><p class="muted small">'+esc(answerRecognitionState(s,q))+'。未识别题也可直接输入；候选文字须核对。</p><label class="inline"><input id="answerBlank" type="checkbox" '+(r?.blank_confirmed?'checked':'')+'> 确认本题未作答</label><div class="toolbar answer-actions"><button id="saveAnswers">确认作答并判分</button><button id="confirmBlankAnswer" class="secondary">确认未作答并记0分</button><button id="apiRecognizeAnswer" class="secondary">API补识预览</button></div><p id="answerActionStatus" role="status" class="muted small">只处理本题，其他题成绩保持不变。</p></div><div><h3>参考答案'+(g?.snapshot?.question?' · 批改时版本':'')+'</h3><pre>'+esc(answer||'未提供参考答案')+'</pre><h3>评分标准</h3>'+(reference.rubric?.length?reference.rubric.map(rr=>'<p>'+esc(rr.criterion)+' <b>'+esc(rr.score)+' 分</b></p>').join(''):'<p class="muted">按标准答案和题目规则评分</p>')+'</div></div><p class="'+(needs?'pending':'score')+'">'+(g?'当前得分 '+fmt(g.effective_score)+' / '+g.max_score+(needs?' · 建议复核':' · 已出分'):'尚未批阅')+'</p><p class="muted small">'+esc(reasons)+'</p>'+(g?'<details><summary>展开评分依据</summary><pre>'+esc(g.evidence.join('\n'))+'</pre></details><form data-review="'+g.id+'"><div class="toolbar"><label>复核分数<input name="score" aria-label="复核分数" type="number" min="0" max="'+g.max_score+'" step="any" required></label><label style="flex:1">复核说明<input name="reason" aria-label="复核说明" placeholder="可选，建议改分时填写" style="width:100%" maxlength="1000"></label><button>'+(g.latest_review_id?'保存再次复核':'确认本题评分')+'</button></div></form>':'<p class="helper-note">可直接填写或确认未作答，再点击确认作答并判分，无需先批阅整卷。</p>')+'</div>';
+  if(g){$('questionArea').querySelector('[name=score]').value=g.effective_score??'';if(g.score_state==='AUTO_SINGLE'){const label=document.createElement('p');label.textContent='日常作业 · 单次自动评分（非双评一致）';$('questionArea').append(label);}}
+  const input=$('questionArea').querySelector('[data-answer]'),blank=$('answerBlank');
+  let previousText=input.value;input.disabled=blank.checked;
+  blank.onchange=()=>{if(blank.checked){previousText=input.value;input.value='';}else input.value=previousText;input.disabled=blank.checked;};
+  $('questionArea').querySelectorAll('input,textarea').forEach(e=>e.dataset.initial=draftValue(e));
+  async function confirmAnswer(isBlank){
+   if(!isBlank&&!input.value.trim())throw Error('请输入学生作答，或点击“确认未作答并记0分”。');
+   const controls=[...$('questionArea').querySelectorAll('input,textarea,button')];controls.forEach(e=>e.disabled=true);
+   try{
+    const updated=await api('/api/submissions/'+id+'/questions/'+q.id+'/confirm-answer',json({raw_text:isBlank?'':input.value,blank_confirmed:isBlank}));
+    const graded=updated.grade_items.find(item=>item.question_id===q.id);
+    if(selected===id&&aid()===assessmentId){$('reviewOnly').value='all';reviewViewValue='all';await openSubmission(id,{force:true});}
+    notice(isBlank?'已人工确认未作答，本题按规则记0分。':graded?.score==null?'作答已确认；本题尚未出分，请检查评分错误或人工给分。':'作答已人工确认并完成本题判分；其他题成绩保留。');
+   }finally{controls.forEach(e=>e.disabled=false);input.disabled=blank.checked;}
+  }
+  action('saveAnswers',async()=>confirmAnswer(blank.checked));
+  action('confirmBlankAnswer',async()=>confirmAnswer(true));
+  action('apiRecognizeAnswer',async()=>{
+   const beforeText=input.value,beforeBlank=blank.checked,requestId=openRequest;
+   $('answerActionStatus').textContent='正在调用已配置的视觉API，仅补识本题；预览不改成绩…';
+   const result=await api('/api/submissions/'+id+'/questions/'+q.id+'/api-recognition-preview',{method:'POST'});
+   if(requestId!==openRequest||selected!==id||current.questions[viewedQuestionIndex]?.id!==q.id)return;
+   if(input.value!==beforeText||blank.checked!==beforeBlank){$('answerActionStatus').textContent='API候选：'+(result.candidate.blank_confirmed?'[未作答]':result.candidate.raw_text)+'。你已编辑作答，未覆盖当前输入。';return;}
+   input.value=result.candidate.raw_text;previousText=input.value;blank.checked=Boolean(result.candidate.blank_confirmed);input.disabled=blank.checked;
+   $('answerActionStatus').textContent='API候选已载入，请核对后点击“确认作答并判分”；当前成绩未改变。';
   });
   const form=$('questionArea').querySelector('form');
   if(form)form.onsubmit=async e=>{
@@ -183,6 +221,8 @@ async function openSubmission(id,{force=false}={}){
   $('bulkArea').innerHTML='<details class="bulk-review"><summary>本卷 '+eligible.length+' 道题可批量确认</summary><p class="muted">仅包含有明确建议分且无评分、识别异常的题。请检查后确认。</p><p>'+eligible.map(g=>'第 '+esc(g.question_no)+' 题 '+fmt(g.score)+' / '+g.max_score).join('；')+'</p><div class="toolbar"><input id="bulkReason" placeholder="确认依据（可选）" maxlength="1000"><button id="bulkConfirm">确认这 '+eligible.length+' 道题</button></div></details>';
   action('bulkConfirm',async()=>{requireSavedAnswers();if(hasDraft())throw Error('请先保存或放弃本题复核修改，再进行批量确认。');if(!confirm('确认已检查列出的 '+eligible.length+' 道题，并按建议分记录人工复核？'))return;await api('/api/reviews/bulk',json({grade_item_ids:eligible.map(g=>g.id),reviewer_ref:'',reason:$('bulkReason').value.trim()}));await openSubmission(id,{force:true});notice('可确认项已保存，异常题仍需单独处理。');});
  }
+ $('answerOverview').innerHTML=answerOverviewHtml(s,questions);
+ $('answerOverview').querySelectorAll('[data-answer-question]').forEach(button=>button.onclick=()=>{if(!mayLeaveDraft())return;$('reviewOnly').value='all';reviewViewValue='all';viewedQuestionIndex=Number(button.dataset.answerQuestion);renderNavigation();});
  renderNavigation();await submissions();
 }
 action('create',async()=>{if(!$('title').value.trim())throw Error('请输入试卷名称');if(!mayLeaveDraft())return;const a=await api('/api/assessments',json({title:$('title').value.trim()}));$('createDialog').close();$('title').value='';await assessments(a.id);navigate('paper');notice('试卷已创建，先保存资料，再准备答案与评分标准。');});
@@ -310,10 +350,10 @@ $('llmProvider').addEventListener('change',()=>{if(displayedProvider==='custom')
 async function loadSettings(){const [s,c]=await Promise.all([api('/api/settings'),api('/api/model-catalog')]);modelProviders=c.providers||[];savedConnection=s;
  $('llmProvider').innerHTML=modelProviders.map(p=>'<option value="'+esc(p.id)+'">'+esc(p.name)+'</option>').join('')+'<option value="custom">自定义连接</option>';
  $('llmProvider').value=s.provider||'custom';customConnectionDraft=s.provider==='custom'?{model:s.model,base_url:s.base_url}:{model:'',base_url:''};$('llmModel').value=s.model;$('llmBaseUrl').value=s.base_url;renderModelProvider(s.model);
- $('gradingProfile').value=s.grading_profile||'legacy';$('llmPasses').value=String(s.llm_grading_passes);$('llmExtract').checked=s.llm_extract_answers;$('llmThinking').checked=s.enable_thinking;$('llmKey').value='';$('settingsStatus').textContent=s.api_key_set?'当前密钥：'+s.api_key_masked:'尚未配置密钥，过程题与 AI 生成答案将不可用。';$('ocrProvider').value=s.ocr_provider;$('ocrDevice').value=s.ocr_device;$('localOcrFirst').checked=s.local_ocr_first;$('reviewMode').value=s.review_mode;$('sampleRate').value=String(Math.round(s.review_sample_rate*100));$('confidenceThreshold').value=s.review_confidence_threshold;}
-action('saveSettings',async()=>{const key=$('llmKey').value.trim(),connection=selectedModelConnection();await api('/api/settings',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({api_key:key||null,...connection,grading_profile:$('gradingProfile').value,llm_grading_passes:Number($('llmPasses').value),llm_extract_answers:$('llmExtract').checked,enable_thinking:$('llmThinking').checked,review_mode:$('reviewMode').value,review_sample_rate:Number($('sampleRate').value)/100,review_confidence_threshold:Number($('confidenceThreshold').value)})});await loadSettings();await refreshHealth();$('llmTestResult').textContent='设置已保存。可测试连接后再批阅。';notice('模型与复核策略已保存；仅影响后续批改，不自动改动已有成绩。');});
+ $('hybridFallback').checked=s.hybrid_fallback_enabled!==false;$('gradingProfile').value=s.grading_profile||'legacy';$('llmPasses').value=String(s.llm_grading_passes);$('llmExtract').checked=s.llm_extract_answers;$('llmThinking').checked=s.enable_thinking;$('llmKey').value='';$('settingsStatus').textContent=s.api_key_set?'当前密钥：'+s.api_key_masked:'尚未配置密钥，过程题与 AI 生成答案将不可用。';$('ocrProvider').value=s.ocr_provider;$('ocrDevice').value=s.ocr_device;$('localOcrFirst').checked=s.local_ocr_first;$('reviewMode').value=s.review_mode;$('sampleRate').value=String(Math.round(s.review_sample_rate*100));$('confidenceThreshold').value=s.review_confidence_threshold;}
+action('saveSettings',async()=>{const key=$('llmKey').value.trim(),connection=selectedModelConnection();await api('/api/settings',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({api_key:key||null,...connection,hybrid_fallback_enabled:$('hybridFallback').checked,grading_profile:$('gradingProfile').value,llm_grading_passes:Number($('llmPasses').value),llm_extract_answers:$('llmExtract').checked,enable_thinking:$('llmThinking').checked,review_mode:$('reviewMode').value,review_sample_rate:Number($('sampleRate').value)/100,review_confidence_threshold:Number($('confidenceThreshold').value)})});await loadSettings();await refreshHealth();$('llmTestResult').textContent='设置已保存。可测试连接后再批阅。';notice('模型与复核策略已保存；仅影响后续批改，不自动改动已有成绩。');});
 action('testLlm',async()=>{const result=await api('/api/settings/test-connection',{method:'POST'});$('llmTestResult').textContent=result.message;notice(result.message);});
-action('saveRuntime',async()=>{const saved=await api('/api/settings');await api('/api/settings',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({model:saved.model,base_url:saved.base_url,llm_grading_passes:saved.llm_grading_passes,llm_extract_answers:saved.llm_extract_answers,enable_thinking:saved.enable_thinking,ocr_provider:$('ocrProvider').value,ocr_device:$('ocrDevice').value,local_ocr_first:$('localOcrFirst').checked})});await refreshHealth();notice('识别设置已保存。环境检查为可选，不影响远程模型流程。');});
+action('saveRuntime',async()=>{const saved=await api('/api/settings');await api('/api/settings',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({model:saved.model,base_url:saved.base_url,llm_grading_passes:saved.llm_grading_passes,llm_extract_answers:saved.llm_extract_answers,enable_thinking:saved.enable_thinking,ocr_provider:$('ocrProvider').value,ocr_device:$('ocrDevice').value,local_ocr_first:$('localOcrFirst').checked,hybrid_fallback_enabled:$('hybridFallback').checked})});await refreshHealth();notice('识别设置已保存。环境检查为可选，不影响远程模型流程。');});
 action('checkOcr',async()=>{const result=await api('/api/runtime/ocr-check',{method:'POST'});await refreshHealth();$('ocrCheckResult').textContent=result.ok?'实际设备：'+result.device+'；本次首次调用 '+result.durations_seconds[0]+' 秒，第二次 '+result.durations_seconds[1]+' 秒。'+result.message:result.message;notice(result.ok?'本地自检通过，当前服务中的 OCR 模型已预热。':'本地自检失败，请查看设备错误信息。',!result.ok);});
 function wrapTables(container){container.querySelectorAll('table').forEach(table=>{const wrapper=document.createElement('div');wrapper.className='table-scroll';wrapper.tabIndex=0;wrapper.setAttribute('aria-label','可横向滚动的数据表格');table.replaceWith(wrapper);wrapper.append(table);});}
 (async()=>{await Promise.all([refreshHealth(),assessments(),loadSettings(),loadLocalVision()].map(p=>p.catch(e=>notice(e.message,true))));})();
@@ -501,7 +541,7 @@ async function loadLayoutStatus(docs){
  $('calibrateLayout').disabled=!state.exists||state.stale;
  $('toggleLayout').textContent=state.enabled?'停用并恢复原识别路径':'启用本地模板';
  const deps=state.local_dependencies||{},missing=Object.entries(deps).filter(([_,v])=>!v).map(([k])=>k);
- $('layoutState').textContent=!current?.questions?.length?'先上传原试卷和答题卡模板／已填样张。尚无题目时先提取题目结构，再匹配答题卡位置，两步模型请求均不生成参考答案。':state.enabled?(state.stale?'题目或来源已变更：请勾选重新生成；未更新前保留识别缺失，不回退视觉 API。':'模板已启用：'+state.items.length+' 道题，'+state.page_count+' 页。学生答卷仅本地识别；未定位或识别不确定的题保留缺分。'):'请先预览来源，支持空白卡或已填样张；拼图需保持同样版式。首次解析使用模型；启用后学生答卷不自动调用视觉 API。';
+ $('layoutState').textContent=!current?.questions?.length?'先上传原试卷和答题卡模板／已填样张。尚无题目时先提取题目结构，再匹配答题卡位置，两步模型请求均不生成参考答案。':state.enabled?(state.stale?'题目或来源已变更：建议重新生成；疑难题按API补处理设置执行。':'模板已启用：'+state.items.length+' 道题，'+state.page_count+' 页。学生答卷本地优先；未可靠识别时按设置补一次API，仍可人工填写。'):'请先预览来源，支持空白卡或已填样张；拼图需保持同样版式。首次解析使用模型；可靠作答复用本地结果，疑难项按API补处理设置执行。';
  if(state.exists&&!state.stale)$('layoutState').textContent+=' 坐标合法仅表示可裁切，不代表位置正确；已逐区确认 '+(state.confirmed_items||0)+' / '+state.items.length+' 题。可先本地边线校准，再预览或修正区域。';
  if(missing.length)$('layoutState').textContent+=' 当前服务缺少 '+missing.join(' / ')+'，请用优化版 GPU 环境启动。';
  if(state.warnings?.length)$('layoutState').textContent+=' '+state.warnings.join('；');
@@ -563,14 +603,14 @@ action('loadLayoutPreview',async()=>{
 function localRecognitionHtml(submission){
  const report=submission.normalization_report?.local_recognition;if(!report)return '';
  const missing=report.missing||[],warnings=report.warnings||[];
- const candidates=Object.entries(report.recognitions||{}).map(([qid,value])=>'<details><summary>题号 '+esc(value.question_no)+' · 转写与原图核对</summary>'+value.parts.map((part,index)=>'<div class="transcription-part"><p>区域 '+(index+1)+' · '+esc(part.model?.model||'')+' · '+(part.blank_confirmed?'已确认未作答':part.consistent?'两次转写一致（未人工确认）':'待校正：'+(part.issues||[]).map(esc).join('；'))+'</p>'+(part.crops||[part.crop]).map((_,r)=>'<a target="_blank" rel="noopener" href="/api/submissions/'+encodeURIComponent(submission.id)+'/local-recognition-crop?question_id='+encodeURIComponent(qid)+'&part='+index+'&region='+r+'">查看原图裁切 '+(r+1)+' ↗</a>').join(' · ')+'<pre>'+esc(part.text)+'</pre>'+(part.verification&&!part.consistent?'<p>第二次转写：</p><pre>'+esc(JSON.stringify(part.verification,null,2))+'</pre>':'')+'<button type="button" class="secondary" data-local-retry="'+esc(submission.id)+'" data-question="'+esc(qid)+'" data-part="'+index+'">重新识别预览</button><div class="local-retry-result" aria-live="polite"></div></div>').join('')+'</details>').join('');
- return '<div class="local-recognition-note '+(missing.length?'incomplete':'')+'"><strong>本地答卷识别 · 未调用远程视觉 API</strong><p>'+(missing.length?'尚未可靠识别：'+missing.map(esc).join('、')+'。这些题保留缺分，可校正作答后重批。':'所有题均已有通过当前校验或人工校正的识别结果；模型一致仍可能出错。')+'</p>'+(warnings.length?'<details><summary>识别详情</summary>'+warnings.slice(0,20).map(w=>'<p>'+esc(w)+'</p>').join('')+'</details>':'')+candidates+'</div>';
+ const candidates=Object.entries(report.recognitions||{}).map(([qid,value])=>'<details><summary>题号 '+esc(value.question_no)+' · 转写与原图核对</summary>'+value.parts.map((part,index)=>'<div class="transcription-part"><p>区域 '+(index+1)+' · '+esc(part.model?.model||'')+' · '+(part.blank_confirmed?'已确认未作答':part.consistent?(part.method==='ocr'?'本地OCR已采用':'两次转写一致，已自动采用（非人工确认）'):'待校正：'+(part.issues||[]).map(esc).join('；'))+'</p>'+(part.crops||[part.crop]).map((_,r)=>'<a target="_blank" rel="noopener" href="/api/submissions/'+encodeURIComponent(submission.id)+'/local-recognition-crop?question_id='+encodeURIComponent(qid)+'&part='+index+'&region='+r+'">查看原图裁切 '+(r+1)+' ↗</a>').join(' · ')+'<pre>'+esc(part.text)+'</pre>'+(part.verification&&!part.consistent?'<p>第二次转写：</p><pre>'+esc(JSON.stringify(part.verification,null,2))+'</pre>':'')+'<button type="button" class="secondary" data-local-retry="'+esc(submission.id)+'" data-question="'+esc(qid)+'" data-part="'+index+'">重新识别预览</button><div class="local-retry-result" aria-live="polite"></div></div>').join('')+'</details>').join('');
+ return '<div class="local-recognition-note '+(missing.length?'incomplete':'')+'"><strong>'+((report.remote_vision_requests||0)>0?'本地优先识别 · 视觉API补识 '+report.remote_vision_requests+' 次':'本地答卷识别 · 本次未调用视觉API')+'</strong><p>'+(missing.length?'尚未可靠识别：'+missing.map(esc).join('、')+'。这些题保留缺分，可校正作答后重批。':'所有题均已有通过当前校验或人工校正的识别结果；模型一致仍可能出错。')+'</p>'+(warnings.length?'<details><summary>识别详情</summary>'+warnings.slice(0,20).map(w=>'<p>'+esc(w)+'</p>').join('')+'</details>':'')+candidates+Object.values(report.api_fallback||{}).map(info=>'<details><summary>第 '+esc(info.question_no)+' 题 · API补识</summary>'+(info.candidate?'<pre>'+esc(info.candidate.blank_confirmed?'[未作答]':info.candidate.raw_text)+'</pre>':'')+(info.error?'<p>'+esc(info.error)+'</p>':'')+'</details>').join('')+'</div>';
 }
 
 
 async function loadLocalVision(){
  const state=await api('/api/runtime/local-vision');$('localVisionEnabled').value=String(state.enabled);$('localVisionModel').value=state.model;
- $('localVisionStatus').textContent=state.ready?'模型已就绪：'+state.model+' · '+(state.quantization||'')+'。两次转写一致不代表教师确认。':state.error;
+ $('localVisionStatus').textContent=state.ready?'模型已就绪：'+state.model+' · '+(state.quantization||'')+'。两次一致自动采用，仍可人工校对；'+(state.hybrid_fallback_enabled?'疑难题允许API补识。':'API补处理已关闭。')+'':state.error;
  return state;
 }
 document.addEventListener('click',async event=>{
@@ -584,4 +624,4 @@ document.addEventListener('click',async event=>{
 });
 
 action('checkLocalVision',async()=>{await loadLocalVision();});
-action('saveLocalVision',async()=>{const state=await api('/api/runtime/local-vision',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled:$('localVisionEnabled').value==='true',model:$('localVisionModel').value.trim(),verify:true})});await loadLocalVision();notice(state.enabled?'已启用本地视觉转写；仅影响后续未可靠识别题目，不修改已有成绩。':'已恢复原有 OCR 路径。');});
+action('saveLocalVision',async()=>{const state=await api('/api/runtime/local-vision',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled:$('localVisionEnabled').value==='true',model:$('localVisionModel').value.trim(),verify:true})});await loadLocalVision();notice(state.enabled?'已启用本地优先识别；疑难项按API补处理设置执行，不修改已有成绩。':'已恢复原有 OCR 路径。');});

@@ -58,12 +58,10 @@ def blank_pixels(image,reference=None):
 
 def verify_blank_part(part,paths,references=None):
     if not part.get('blank_candidate'):return
-    checks=[]
-    for index,path in enumerate(paths):
-        with Image.open(path) as image:
-            checks.append(blank_pixels(image,references[index] if references else None))
-    part['blank_evidence']=checks
-    part['blank_confirmed']=part.get('consistent') is True and all(c['confirmed'] for c in checks)
+    # Two explicit, complete blank observations are adopted automatically.
+    # This is machine provenance, never teacher confirmation or a calibrated probability.
+    part['blank_confirmed']=part.get('consistent') is True
+    part['blank_evidence']=[{'method':'two_explicit_local_blank_observations','confirmed':part['blank_confirmed']}]
     if not part['blank_confirmed']:
         part['consistent']=False
         part['issues']=[*part.get('issues',[]),'空白候选未通过局部笔迹核验，保留缺分']

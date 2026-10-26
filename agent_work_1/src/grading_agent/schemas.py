@@ -83,11 +83,24 @@ class AnswerInput(BaseModel):
     def require_question_reference(self) -> "AnswerInput":
         if not self.question_no and not self.question_id:
             raise ValueError("question_id 或 question_no 至少提供一个")
+        if self.blank_confirmed and self.raw_text.strip():
+            raise ValueError('未作答不能同时填写作答文字')
         return self
 
 
 class AnswersUpsert(BaseModel):
     answers: list[AnswerInput]
+
+
+class AnswerConfirmation(BaseModel):
+    raw_text: str = Field(default='',max_length=30000)
+    blank_confirmed: bool = False
+
+    @model_validator(mode='after')
+    def require_answer_or_blank(self):
+        if self.blank_confirmed == bool(self.raw_text.strip()):
+            raise ValueError('请填写作答内容，或明确确认未作答，不能同时选择')
+        return self
 
 
 class ReviewCreate(BaseModel):
@@ -111,6 +124,7 @@ class DocumentTextUpdate(BaseModel):
 
 
 class LLMSettingsUpdate(BaseModel):
+    hybrid_fallback_enabled: bool | None = None
     grading_profile: Literal['legacy', 'daily', 'exam'] | None = None
     api_key: str | None = Field(default=None, max_length=500)
     provider: str | None = Field(default=None, max_length=30)

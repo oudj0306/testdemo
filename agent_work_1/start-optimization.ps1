@@ -63,6 +63,8 @@ try {
         $needsVision = & $pythonExe -c "from grading_agent.config import get_settings; print('1' if get_settings().local_vision_enabled else '0')"
         if ($LASTEXITCODE -ne 0) { throw 'Cannot read local vision settings' }
         if ($needsVision -eq '1') {
+            $canUseApi = & $pythonExe -c "from grading_agent.config import get_settings; s=get_settings(); print('1' if s.hybrid_fallback_enabled and s.llm_extract_answers and s.openai_api_key else '0')"
+            try {
             $visionReady = $null
             try { $visionReady = Invoke-RestMethod 'http://127.0.0.1:11435/api/version' -TimeoutSec 2 } catch { }
             if (-not $visionReady.version) {
@@ -74,7 +76,11 @@ try {
                 }
                 if (-not $visionReady.version) { throw 'Local vision service did not start; check data/local-vision/service-error.log' }
             }
-            Write-Host 'Local visual transcription enabled (loopback only; no remote vision fallback).'
+            Write-Host 'Local visual transcription enabled. Uncertain items follow the API fallback setting.'
+            } catch {
+                if ($canUseApi -ne '1') { throw }
+                Write-Warning 'Local visual service could not start. Configured API fallback is enabled; grading service will still start.'
+            }
         }
         Write-Host "Python: $pythonExe"
         Write-Host "Data: $env:GRADING_DATA_DIR"

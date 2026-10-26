@@ -37,6 +37,7 @@ class Settings:
     local_vision_url: str = 'http://127.0.0.1:11435'
     local_vision_model: str = 'qwen3-vl:4b-instruct'
     local_vision_verify: bool = True
+    hybrid_fallback_enabled: bool = True
 
 
 def _data_dir() -> Path:
@@ -108,6 +109,7 @@ def get_settings() -> Settings:
         local_vision_url=str(overrides.get('local_vision_url', 'http://127.0.0.1:11435')),
         local_vision_model=str(overrides.get('local_vision_model', 'qwen3-vl:4b-instruct')),
         local_vision_verify=_as_bool(overrides.get('local_vision_verify', True)),
+        hybrid_fallback_enabled=_as_bool(overrides.get('hybrid_fallback_enabled',os.getenv('HYBRID_FALLBACK_ENABLED','true'))),
     )
     for directory in (settings.data_dir, settings.upload_dir, settings.page_dir, settings.crop_dir):
         directory.mkdir(parents=True, exist_ok=True)
@@ -138,6 +140,7 @@ def update_llm_settings(
     review_sample_rate: float | None = None,
     review_confidence_threshold: float | None = None,
     grading_profile: str | None = None,
+    hybrid_fallback_enabled: bool | None = None,
 ) -> Settings:
     global _settings_cache
     data_dir = _data_dir()
@@ -152,7 +155,7 @@ def update_llm_settings(
     for name, value in (("ocr_provider", ocr_provider), ("ocr_device", ocr_device),
                         ("local_ocr_first", local_ocr_first), ("review_mode", review_mode),
                         ("review_sample_rate", review_sample_rate), ('review_confidence_threshold', review_confidence_threshold),
-                        ('grading_profile', grading_profile)):
+                        ('grading_profile', grading_profile),('hybrid_fallback_enabled',hybrid_fallback_enabled)):
         if value is not None:
             overrides[name] = value
     data_dir.mkdir(parents=True, exist_ok=True)

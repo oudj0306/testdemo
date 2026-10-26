@@ -112,6 +112,8 @@ def test_invalid_layout_not_accepted(problem):
 @pytest.fixture
 def workspace(monkeypatch):
     from grading_agent.app import app
+    # These tests drive grading explicitly; background workers must not steal manual queue claims.
+    monkeypatch.setattr('grading_agent.app.BatchQueue.start',lambda self:None)
     monkeypatch.setattr(config,'_settings_cache',replace(config.get_settings(),openai_api_key='synthetic',
                         ocr_provider='paddleocr',grading_profile='daily',review_sample_rate=0))
     calls=[]

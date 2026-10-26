@@ -132,7 +132,7 @@ class BatchQueue:
                                           None, job['answer_layout'])
             with transaction() as connection:
                 connection.execute("UPDATE grading_batch_items SET submission_id=? WHERE id=?", (submission['id'], job['id']))
-        if submission.get('extraction_warning') and submission.get('normalization_report', {}).get('local_recognition', {}).get('mode') != 'local_only':
+        if submission.get('extraction_warning') and submission.get('normalization_report', {}).get('local_recognition', {}).get('mode') not in {'local_only','hybrid'}:
             raise ValueError("识别失败；可打开答卷校对后重批：" + submission['extraction_warning'])
         if job['auto_grade']:
             with transaction() as connection:
@@ -158,7 +158,7 @@ class BatchQueue:
         """Extract a bounded cohort first, then grade each shared question."""
         from ..repository import questions_for_submission
         from ..db import utc_now
-        from .grading import requires_model
+        from .grading import requires_model,grading_question
         from .bulk_grader import grade_daily_items
         settings = get_settings()
         ready, groups = [], {}
@@ -187,12 +187,12 @@ class BatchQueue:
                             ready.append((job, prepared, expected, utc_now()))
                             for q in pending:
                                 response = responses.get(q['id'])
-                                if requires_model(q, response):
+                                if requires_model(q, response,settings):
                                     # A teacher may edit standards between two extractions.
                                     # Never mix the old and new snapshots in one request.
                                     key = (q['id'], hashlib.sha256(json.dumps(q, ensure_ascii=False,
                                            sort_keys=True).encode()).hexdigest())
-                                    groups.setdefault(key, (q, []))[1].append((prepared, response))
+                                    groups.setdefault(key, (grading_question(q), []))[1].append((prepared, response))
                         else:
                             self.finish(job)
                     except SubmissionBusyError:

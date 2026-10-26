@@ -14,12 +14,75 @@ import pypdfium2 as pdfium
 from .config import get_settings
 from .db import transaction, utc_now, decode_json, encode_json
 from .repository import get_assessment, row_dict
-from .schemas import RegionInput, TrainingApproval
+from .schemas import RegionInput, TrainingApproval, AnswerConfirmation
 from .services.ingestion import serialized_document_io
 from .services.telemetry import summary
 from .services.document_renderer import WORD_MEDIA, renderer_status, word_to_pdf
 
 router = APIRouter()
+
+
+@router.post('/api/submissions/{submission_id}/questions/{question_id}/confirm-answer')
+def confirm_answer(submission_id: str,question_id: str,payload: AnswerConfirmation):
+    from .repository import get_submission,upsert_response
+    from .services.grading import grade_submission
+    from .services.work_locks import submission_work,SubmissionBusyError
+    settings=get_settings()
+    try:
+        with submission_work(settings.database_path,submission_id,blocking=False):
+            submission=get_submission(submission_id)
+            if not submission:raise HTTPException(404,'答卷不存在')
+            assessment=get_assessment(submission['assessment_id'])
+            if question_id not in {q['id'] for q in (assessment or {}).get('questions',[])}:
+                raise HTTPException(404,'题目不属于该答卷')
+            upsert_response(submission_id,question_id,payload.raw_text,None,payload.blank_confirmed,'manual')
+            current=get_submission(submission_id)
+            report=current.get('normalization_report',{})
+            if 'local_recognition' in report:
+                from .services.answer_extractor import reusable_answer_ids
+                reliable=reusable_answer_ids(assessment['questions'],current['responses'],settings)
+                local=report['local_recognition']
+                local['missing']=[q['question_no'] for q in assessment['questions'] if q['id'] not in reliable]
+                number=next(q['question_no'] for q in assessment['questions'] if q['id']==question_id)
+                local['warnings']=[w for w in local.get('warnings',[]) if not w.startswith(number+'：')]
+                with transaction() as db:
+                    db.execute('UPDATE submissions SET normalization_report=? WHERE id=?',(encode_json(report),submission_id))
+            return grade_submission(submission_id,settings,question_ids={question_id})
+    except SubmissionBusyError as exc:raise HTTPException(409,str(exc)) from exc
+
+
+@router.post('/api/submissions/{submission_id}/questions/{question_id}/api-recognition-preview')
+def api_recognition_preview(submission_id: str,question_id: str):
+    from .repository import get_submission,record_token_usage
+    from .services.ingestion import IngestedDocument,NormalizedPage
+    from .services.answer_extractor import extract_answers_with_model
+    from .services.hybrid_recognition import extract_uncertain_question
+    from .services.layout_templates import load_layout
+    from pathlib import Path
+    settings=get_settings()
+    if not settings.openai_api_key:raise HTTPException(409,'请先配置视觉API模型和密钥')
+    submission=get_submission(submission_id)
+    if not submission:raise HTTPException(404,'答卷不存在')
+    assessment=get_assessment(submission['assessment_id'])
+    question=next((q for q in (assessment or {}).get('questions',[]) if q['id']==question_id),None)
+    if not question:raise HTTPException(404,'题目不属于该答卷')
+    source=Path(submission['source_path']).resolve()
+    if not source.is_relative_to(settings.data_dir.resolve()) or not source.is_file():raise HTTPException(404,'原件不可访问')
+    pages=[]
+    for page in submission['pages']:
+        path=Path(page['image_path']).resolve()
+        if not path.is_relative_to(settings.data_dir.resolve()) or not path.is_file():raise HTTPException(404,'页面不可访问')
+        pages.append(NormalizedPage(page['page_no'],path,page['width'],page['height'],page['quality_state'],page['quality_report']))
+    document=IngestedDocument(submission['source_hash'],source,submission['media_type'],pages)
+    diagnostics=submission.get('normalization_report',{}).get('local_recognition',{})
+    try:
+        answer,usage,input_source=extract_uncertain_question(document,question,settings,diagnostics,load_layout(assessment),extract_answers_with_model)
+        record_token_usage(submission['assessment_id'],submission_id,'extract_preview',usage['input_tokens'],usage['output_tokens'],usage['cached_tokens'])
+        return {'preview_only':True,'writes_grades':False,'candidate':answer,'usage':usage,'input_source':input_source}
+    except Exception as exc:
+        usage=getattr(exc,'usage',None)
+        if usage:record_token_usage(submission['assessment_id'],submission_id,'extract_preview',usage['input_tokens'],usage['output_tokens'],usage['cached_tokens'])
+        raise HTTPException(422,str(exc)[:500]) from exc
 
 
 class LocalVisionSettings(BaseModel):
@@ -33,7 +96,8 @@ def local_vision_status():
     from .services.local_vision import runtime
     settings=get_settings()
     result={'enabled':settings.local_vision_enabled,'model':settings.local_vision_model,
-            'verify':settings.local_vision_verify,'url':settings.local_vision_url}
+            'verify':settings.local_vision_verify,'url':settings.local_vision_url,
+            'hybrid_fallback_enabled':settings.hybrid_fallback_enabled}
     try:return {**result,**runtime(settings)}
     except ValueError as exc:return {**result,'ready':False,'error':str(exc)}
 

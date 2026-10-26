@@ -138,24 +138,26 @@ def persist_submission(
     retained_ids = reusable_answer_ids(assessment['questions'], submission['responses'], settings)
     pending_questions = [q for q in assessment['questions'] if q['id'] not in retained_ids]
     if local_layout:
-        # Enabling a layout explicitly chooses local recognition. No hidden paid
-        # fallback, including stale templates, missing pages or OCR failures.
+        # Reliable local answers stay local; uncertain ones may use the configured API.
         from .services.local_answers import recognize_answers
         answers, warnings, diagnostics = recognize_answers(local_layout, document.pages, pending_questions, settings)
         for answer in answers:
             upsert_response(submission['id'], answer['question_id'], answer['raw_text'],
                             answer['confidence'], answer['blank_confirmed'], answer['source'])
+        from .services.hybrid_recognition import supplement_local_answers
+        supplement_local_answers(submission,assessment['questions'],document,settings,diagnostics,local_layout,extract_answers_with_model)
         saved = get_submission(submission['id'])
         reliable = reusable_answer_ids(assessment['questions'], saved['responses'], settings)
         missing = [q['question_no'] for q in assessment['questions'] if q['id'] not in reliable]
         report['local_recognition'] = {**diagnostics, 'warnings': warnings, 'missing': missing,
-                                     'mode': 'local_only', 'remote_vision_requests': 0}
+                                     'mode': 'hybrid' if settings.hybrid_fallback_enabled else 'local_only',
+                                     'remote_vision_requests':diagnostics.get('remote_vision_requests',0)}
         with transaction() as db:
             db.execute('UPDATE submissions SET status=?,normalization_report=? WHERE id=?',
                        ('extraction_failed' if missing else 'extracted', encode_json(report), submission['id']))
         result = get_submission(submission['id'])
         if missing:
-            result['extraction_warning'] = '本地识别未完成：' + '、'.join(missing) + '。' + '；'.join(warnings)
+            result['extraction_warning'] = '仍未可靠识别：' + '、'.join(missing) + '。可人工填写或确认未作答。' + '；'.join(warnings)
         return result
     # Choice marks are localized by the visual extractor, never by plain region OCR.
     crops = crop_question_regions(document.pages, [q for q in pending_questions if not is_choice_question(q)], settings)
@@ -303,6 +305,7 @@ def settings_get() -> dict[str, Any]:
         "ocr_provider": settings.ocr_provider,
         "ocr_device": settings.ocr_device,
         "local_ocr_first": settings.local_ocr_first,
+        "hybrid_fallback_enabled": settings.hybrid_fallback_enabled,
         "grading_profile": settings.grading_profile,
         "review_mode": settings.review_mode,
         "review_sample_rate": settings.review_sample_rate,
@@ -339,6 +342,7 @@ def settings_update(payload: LLMSettingsUpdate) -> dict[str, Any]:
         review_sample_rate=payload.review_sample_rate,
         review_confidence_threshold=payload.review_confidence_threshold,
         grading_profile=payload.grading_profile,
+        hybrid_fallback_enabled=payload.hybrid_fallback_enabled,
     )
     return settings_get()
 
@@ -764,7 +768,7 @@ def submission_grade(submission_id: str, pending_only: bool = False) -> dict[str
             saved = get_submission(submission_id)
             if saved and saved['status'] in {'uploaded', 'extraction_failed'}:
                 prepared = prepare_submission(submission_id)
-                if prepared.get('extraction_warning') and prepared.get('normalization_report', {}).get('local_recognition', {}).get('mode') != 'local_only':
+                if prepared.get('extraction_warning') and prepared.get('normalization_report', {}).get('local_recognition', {}).get('mode') not in {'local_only','hybrid'}:
                     raise ValueError(prepared['extraction_warning'])
             return grade_submission(submission_id, settings, pending_only=pending_only)
     except SubmissionBusyError as exc:

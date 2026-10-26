@@ -155,7 +155,7 @@ def recognize_answers(layout, pages, questions, settings):
     """Returns candidate answers plus diagnostics; caller preserves human corrections."""
     output, warnings, diagnostics = [], [], {'version':layout['version'], 'template_id':layout.get('template_id'), 'pages':{}, 'marks':{}}
     if layout.get('stale'):
-        return [], ['题目或模板来源已改变，请重新生成模板；本地模式不调用视觉 API'], diagnostics
+        return [], ['题目或模板来源已改变，请重新生成模板；未可靠识别题按API补处理设置执行'], diagnostics
     if not all(dependencies().values()):
         return [], ['当前 Python 缺少 OpenCV / NumPy，请使用优化版 GPU 环境或安装 local_recognition 依赖'], diagnostics
     try:
@@ -243,16 +243,21 @@ def recognize_answers(layout, pages, questions, settings):
                         texts.append(part['text']);blanks.append(bool(part.get('blank_confirmed')));continue
                     with timed('local_layout_ocr'):
                         t,c,_ = adapter.extract(crop)
+                    part={'crop':crop.name,'text':t,'confidence':c,'consistent':False,'issues':[],
+                          'method':'ocr','model':{'model':'PP-OCRv5'}}
+                    parts.append(part)
+                    diagnostics['recognitions'][qid]={'parts':parts,'question_no':q['question_no']}
                     if not t.strip():
                         with Image.open(crop) as pixels:evidence=blank_pixels(pixels,reference)
                         if evidence['confirmed']:
                             texts.append('');blanks.append(True)
-                            parts.append({'crop':crop.name,'text':'','consistent':True,'issues':[],
-                                          'blank_confirmed':True,'blank_evidence':[evidence]})
-                            diagnostics['recognitions'][qid]={'parts':parts,'question_no':q['question_no']}
+                            part.update(consistent=True,blank_confirmed=True,blank_evidence=[evidence])
                             continue
                     if not t.strip() or c is None or not math.isfinite(float(c)) or not 0 <= float(c) <= 1:
-                        raise ValueError('OCR 未可靠提取完整作答，不能认定为空白')
+                        part['issues']=['OCR 未可靠提取完整作答，不能认定为空白']
+                        texts.append(t or '');blanks.append(False);continue
+                    part['consistent']=float(c)>=max(.9,settings.review_confidence_threshold)
+                    if not part['consistent']:part['issues']=['OCR置信不足，等待API或人工补识别']
                     texts.append(t)
                     scores.append(float(c))
                     blanks.append(False)
@@ -276,6 +281,8 @@ def recognize_answers(layout, pages, questions, settings):
                     blank=bool(blanks) and all(blanks)
                     text,confidence,source=('' if blank else '\n'.join('[未作答]' if empty else t for t,empty in zip(texts,blanks))),None,('local_layout_blank' if blank else 'local_vlm_consistent')
                 else:
+                    issues=[issue for part in parts for issue in part['issues']]
+                    if issues:raise ValueError('；'.join(dict.fromkeys(issues)))
                     blank=bool(blanks) and all(blanks)
                     text,confidence,source = ('' if blank else '\n'.join('[未作答]' if empty else t for t,empty in zip(texts,blanks))),(min(scores) if scores else None),('local_layout_blank' if blank else 'local_layout_ocr')
                 if q['scoring_mode']=='choice_set' and not blank:
