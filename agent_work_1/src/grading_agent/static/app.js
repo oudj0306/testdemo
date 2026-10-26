@@ -138,15 +138,15 @@ function answerRecognitionState(submission,q){
  const fallback=submission.normalization_report?.local_recognition?.api_fallback?.[q.id];
  if(r?.extraction_source==='api_vision_fallback')return r.blank_confirmed?'API补识 · 确认空白':r.raw_text?.trim()?'API补识 · 已采用':'API补识 · 仍不确定';
  if(fallback?.attempted)return fallback.error?'API补识 · 调用失败':'API补识 · 仍不确定';
- if(submission.normalization_report?.local_recognition?.missing?.includes(q.question_no))return answerCandidate(submission,q.id)?'候选待人工确认':'未可靠识别，可直接填写';
+ if(submission.normalization_report?.local_recognition?.missing?.includes(q.question_no))return answerCandidate(submission,q.id)?'本地候选 · 待API补识':'等待自动API补识';
  if(r?.blank_confirmed)return '自动识别未作答';
  if(r?.raw_text?.trim())return r.extraction_source==='api_vision_fallback'?'API补识已采用':'已自动采用';
- return answerCandidate(submission,q.id)?'候选待人工确认':'未可靠识别，可直接填写';
+ return answerCandidate(submission,q.id)?'本地候选 · 待API补识':'等待自动API补识';
 }
 function reviewQuestionOrder(questions){return [...questions].sort((a,b)=>a.question_no.localeCompare(b.question_no,'zh',{numeric:true}));}
 function answerOverviewHtml(submission,questions,items=questions.map((q,i)=>({q,i})),expanded=true){
  return '<details class="answer-overview" '+(expanded?'open':'')+'><summary><span>作答校对 <small>'+questions.length+' 题 · 含未识别题</small></span><span class="overview-toggle">展开 / 收起</span></summary><div class="table-scroll"><table><thead><tr><th>题号</th><th>识别状态</th><th>作答 / 待核对候选</th><th>操作</th></tr></thead><tbody>'+items.map(({q,i})=>{
-  const r=submission.responses.find(r=>r.question_id===q.id),text=r?.blank_confirmed?'[未作答]':r?.raw_text||answerCandidate(submission,q.id)||'尚未识别，请填写或确认未作答';
+  const r=submission.responses.find(r=>r.question_id===q.id),text=r?.blank_confirmed?'[未作答]':r?.raw_text||answerCandidate(submission,q.id)||(submission.normalization_report?.local_recognition?.api_fallback?.[q.id]?.error?'API调用失败，系统未取得转写':submission.normalization_report?.local_recognition?.api_fallback?.[q.id]?.attempted?'API整页补识后未返回有效转写':'等待自动API补识');
   return '<tr><td>'+esc(q.question_no)+'</td><td><span class="recognition-tag '+(r?.extraction_source==='api_vision_fallback'?'api':r?.extraction_source==='manual'?'manual':'')+'">'+esc(answerRecognitionState(submission,q))+'</span></td><td class="answer-overview-text">'+esc(text.slice(0,180))+(text.length>180?'…':'')+'</td><td><button class="secondary" data-answer-question="'+i+'">校对本题</button></td></tr>';
  }).join('')+'</tbody></table></div><div id="answerOverviewPager" class="pagination"></div></details>';
 }

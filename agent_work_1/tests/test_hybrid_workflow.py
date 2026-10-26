@@ -101,14 +101,17 @@ def test_rule_parse_problem_uses_model_but_exact_numeric_wrong_answer_does_not(w
     assert result['grade_items'][0]['score']==0 and len(requests)==1
 
 
-def test_low_confidence_remote_blank_is_not_zero(workspace,monkeypatch):
+def test_explicit_api_blank_is_used_with_low_confidence_review_hint(workspace,monkeypatch):
     client,a,qs,doc,source,calls=workspace;generate(workspace);enable_hybrid(monkeypatch)
     monkeypatch.setattr('grading_agent.services.ingestion.OCRAdapter.extract',lambda *args:('4?',.3,'ocr'))
     monkeypatch.setattr('grading_agent.app.extract_answers_with_model',lambda *args,**kwargs:([dict(question_no=qs[1]['question_no'],raw_text='',confidence=.2,blank_confirmed=True)],dict(input_tokens=1,output_tokens=1,cached_tokens=0)))
     student=upload(workspace,unreadable_image(source))
     response=next(r for r in student['responses'] if r['question_id']==qs[1]['id'])
-    assert not response['blank_confirmed'] and response['raw_text']==''
-    assert student['normalization_report']['local_recognition']['missing']==['二-1']
+    assert response['blank_confirmed'] and response['raw_text']==''
+    assert student['normalization_report']['local_recognition']['missing']==[]
+    graded=client.post(f"/api/submissions/{student['id']}/grade").json()
+    grade=next(g for g in graded['grade_items'] if g['question_id']==qs[1]['id'])
+    assert grade['score']==0 and grade['needs_review']
 
 
 def test_api_preview_leaves_responses_and_human_scores_unchanged(workspace,monkeypatch):
@@ -166,3 +169,55 @@ def test_local_special_cases_automatically_use_api_result(workspace,monkeypatch,
     grade=next(g for g in result['grade_items'] if g['question_id']==qs[1]['id'])
     assert grade['score']==5 and grade['grader_kind']=='rules' and grade['needs_review']
     assert len(requests)==1
+
+
+def test_empty_crop_api_automatically_retries_whole_page_and_accounts_both(workspace,monkeypatch):
+    from grading_agent.db import transaction
+    client,a,qs,doc,source,calls=workspace;generate(workspace);enable_hybrid(monkeypatch)
+    monkeypatch.setattr('grading_agent.services.ingestion.OCRAdapter.extract',lambda *a:('local wrong',.3,'ocr'))
+    requests=[]
+    def extract(document,questions,settings,**kwargs):
+        requests.append(kwargs)
+        return [dict(question_no=qs[1]['question_no'],raw_text='' if len(requests)==1 else '42',confidence=.1 if len(requests)==1 else .99,blank_confirmed=False)],dict(input_tokens=10,output_tokens=2,cached_tokens=0)
+    monkeypatch.setattr('grading_agent.app.extract_answers_with_model',extract)
+    student=upload(workspace,unreadable_image(source))
+    assert len(requests)==2 and 'region_images' in requests[0] and 'page_images' in requests[1]
+    assert len(requests[1]['page_images'])==1
+    info=student['normalization_report']['local_recognition']['api_fallback'][qs[1]['id']]
+    assert info['adopted'] and info['input_source']=='context_pages'
+    assert student['normalization_report']['local_recognition']['remote_vision_requests']==2
+    assert next(r for r in student['responses'] if r['question_id']==qs[1]['id'])['raw_text']=='42'
+    with transaction() as db:
+        rows=db.execute("SELECT input_tokens,output_tokens FROM token_usage WHERE submission_id=? AND stage='extract_fallback'",(student['id'],)).fetchall()
+    assert [(r['input_tokens'],r['output_tokens']) for r in rows]==[(20,4)]
+
+
+@pytest.mark.parametrize('route',['single','batch'])
+def test_old_review_required_submission_resumes_api_without_rerunning_local(workspace,monkeypatch,route):
+    from grading_agent.services.batch_queue import BatchQueue,enqueue_saved
+    from grading_agent.app import prepare_submission
+    client,a,qs,doc,source,calls=workspace;generate(workspace)
+    monkeypatch.setattr('grading_agent.services.ingestion.OCRAdapter.extract',lambda *a:('local wrong',.3,'ocr'))
+    student=upload(workspace,unreadable_image(source));sid=student['id']
+    graded=client.post(f'/api/submissions/{sid}/grade').json()
+    assert graded['status']=='review_required'
+    original_grade=next(g for g in graded['grade_items'] if g['question_id']==qs[0]['id'])
+    enable_hybrid(monkeypatch)
+    monkeypatch.setattr('grading_agent.services.local_answers.recognize_answers',lambda *a:pytest.fail('must resume directly from saved regions'))
+    requests=[]
+    def extract(document,questions,settings,**kwargs):
+        requests.append(kwargs)
+        return [dict(question_no=qs[1]['question_no'],raw_text='42',confidence=.99,blank_confirmed=False)],dict(input_tokens=10,output_tokens=2,cached_tokens=0)
+    monkeypatch.setattr('grading_agent.app.extract_answers_with_model',extract)
+    if route=='single':
+        response=client.post(f'/api/submissions/{sid}/grade?pending_only=true');assert response.status_code==200,response.text
+    else:
+        batch=enqueue_saved(a['id'],[sid])
+        queue=BatchQueue(persist=None,prepare=prepare_submission)
+        job={'assessment_id':a['id'],'submission_id':sid,'auto_grade':True,'id':batch['items'][0]['id']}
+        queue.process_submission(job)
+    result=get_submission(sid)
+    assert len(requests)==1
+    assert result['normalization_report']['local_recognition']['mode']=='hybrid'
+    assert next(g for g in result['grade_items'] if g['question_id']==qs[1]['id'])['score']==5
+    assert next(g for g in result['grade_items'] if g['question_id']==qs[0]['id'])['id']==original_grade['id']

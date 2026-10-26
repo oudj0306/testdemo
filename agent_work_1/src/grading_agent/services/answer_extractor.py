@@ -129,7 +129,7 @@ def reusable_answer_ids(questions, responses, settings):
             valid_confidence = confidence is not None and math.isfinite(float(confidence)) and 0 <= float(confidence) <= 1
             # API fallback is the final transcription route, not another local OCR pass.
             # Nonempty valid output is used for grading; confidence still controls review hints.
-            if response.get('extraction_source')=='api_vision_fallback' and text_present and valid_confidence:
+            if response.get('extraction_source')=='api_vision_fallback' and (text_present or blank_confirmed) and valid_confidence:
                 reusable.add(question_id)
                 continue
             if valid_confidence and float(confidence) >= confidence_threshold(by_id[question_id], settings):
@@ -148,6 +148,7 @@ def extract_answers_with_model(
     target_question_nos: list[str] | None = None,
     answer_layout: str = "auto",
     region_images: dict | None = None,
+    page_images: list | None = None,
 ) -> list[dict[str, Any]]:
     validate_answer_layout(answer_layout)
     requested = None if target_question_nos is None else set(target_question_nos)
@@ -195,6 +196,15 @@ def extract_answers_with_model(
                     raise ValueError('补识别裁切不可访问')
                 encoded=base64.b64encode(image_path.read_bytes()).decode('ascii')
                 content.append({'type':'input_image','image_url':'data:image/png;base64,'+encoded,'detail':'high'})
+    elif page_images is not None:
+        from pathlib import Path
+        if not page_images:raise ValueError('整页补识缺少可用页面')
+        content.append({'type':'input_text','text':'局部裁切未完整读出该题。以下为对应学生答卷原始完整页，请重新在整页定位目标题，忠实转写最终有效作答；清楚未作答则明确返回 blank_confirmed=true，不要照抄印刷题干或求解。'})
+        for page in page_images:
+            image_path=Path(page.path).resolve()
+            if not image_path.is_relative_to(settings.data_dir.resolve()) or not image_path.is_file():raise ValueError('整页补识图片不可访问')
+            content.append({'type':'input_text','text':f'学生答卷第 {page.page_no} 页：'})
+            content.append({'type':'input_image','image_url':'data:image/png;base64,'+base64.b64encode(image_path.read_bytes()).decode('ascii'),'detail':'high'})
     elif local_text is not None:
         content.append({'type': 'input_text', 'text': '本地 OCR 转写（可能存在漏识别，无法可靠对应题号时降低 confidence，不得求解补全）：\n' + local_text})
     elif document.media_type == 'application/msword':

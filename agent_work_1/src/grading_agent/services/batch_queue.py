@@ -123,7 +123,8 @@ class BatchQueue:
     def process_submission(self, job):
         assessment = get_assessment(job['assessment_id'])
         submission = get_submission(job['submission_id']) if job['submission_id'] else None
-        if submission and submission['status'] in {'uploaded', 'extraction_failed'} and self.prepare:
+        from .hybrid_recognition import needs_recognition
+        if submission and self.prepare and needs_recognition(submission,assessment['questions'],get_settings()):
             with timed('extraction'):
                 submission = self.prepare(submission['id'])
         if submission is None:

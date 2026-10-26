@@ -250,6 +250,9 @@ def _prepare_submission_locked(submission_id):
         with transaction() as db:
             db.execute("UPDATE submissions SET status='extracted' WHERE id=? AND status IN ('uploaded','extraction_failed')", (submission_id,))
         return get_submission(submission_id)
+    from .services.hybrid_recognition import supplement_saved_submission
+    supplemented=supplement_saved_submission(submission,assessment,get_settings(),extract_answers_with_model)
+    if supplemented is not None:return supplemented
     return persist_submission(assessment,submission['student_ref'],path.read_bytes(),submission['media_type'],submission_id)
 
 
@@ -767,7 +770,8 @@ def submission_grade(submission_id: str, pending_only: bool = False) -> dict[str
         settings = get_settings()
         with submission_work(settings.database_path, submission_id, blocking=False):
             saved = get_submission(submission_id)
-            if saved and saved['status'] in {'uploaded', 'extraction_failed'}:
+            from .services.hybrid_recognition import needs_recognition
+            if saved and needs_recognition(saved,get_assessment(saved['assessment_id'])['questions'],settings):
                 prepared = prepare_submission(submission_id)
                 if prepared.get('extraction_warning') and prepared.get('normalization_report', {}).get('local_recognition', {}).get('mode') not in {'local_only','hybrid'}:
                     raise ValueError(prepared['extraction_warning'])
