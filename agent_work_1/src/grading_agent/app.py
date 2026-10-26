@@ -130,6 +130,9 @@ def persist_submission(
     )
     if submission.get('duplicate'):
         return submission
+    from .services.batch_control import bind_submission,checkpoint,BatchSuspended
+    bind_submission(submission['id'])
+    checkpoint()
     if existing_id:
         with transaction() as db:
             db.execute('UPDATE submissions SET normalization_report=? WHERE id=?', (encode_json(report),existing_id))
@@ -140,13 +143,27 @@ def persist_submission(
     if local_layout:
         # Reliable local answers stay local; uncertain ones may use the configured API.
         from .services.local_answers import recognize_answers
-        answers, warnings, diagnostics = recognize_answers(local_layout, document.pages, pending_questions, settings)
-        for answer in answers:
+        def save_local_answer(answer):
             upsert_response(submission['id'], answer['question_id'], answer['raw_text'],
                             answer['confidence'], answer['blank_confirmed'], answer['source'])
+        try:
+            answers, warnings, diagnostics = recognize_answers(local_layout, document.pages, pending_questions, settings,on_answer=save_local_answer)
+        except BatchSuspended as exc:
+            _,warnings,diagnostics=exc.local_result
+            reliable=reusable_answer_ids(assessment['questions'],get_submission(submission['id'])['responses'],settings)
+            report['local_recognition']={**diagnostics,'warnings':warnings,'mode':'hybrid' if settings.hybrid_fallback_enabled else 'local_only',
+                                         'missing':[q['question_no'] for q in assessment['questions'] if q['id'] not in reliable]}
+            with transaction() as db:db.execute('UPDATE submissions SET normalization_report=? WHERE id=?',(encode_json(report),submission['id']))
+            raise
         from .services.hybrid_recognition import supplement_local_answers
         diagnostics['warnings']=warnings
-        supplement_local_answers(submission,assessment['questions'],document,settings,diagnostics,local_layout,extract_answers_with_model)
+        try:
+            supplement_local_answers(submission,assessment['questions'],document,settings,diagnostics,local_layout,extract_answers_with_model)
+        except BatchSuspended:
+            reliable=reusable_answer_ids(assessment['questions'],get_submission(submission['id'])['responses'],settings)
+            report['local_recognition']={**diagnostics,'mode':'hybrid','missing':[q['question_no'] for q in assessment['questions'] if q['id'] not in reliable]}
+            with transaction() as db:db.execute('UPDATE submissions SET normalization_report=? WHERE id=?',(encode_json(report),submission['id']))
+            raise
         saved = get_submission(submission['id'])
         reliable = reusable_answer_ids(assessment['questions'], saved['responses'], settings)
         missing = [q['question_no'] for q in assessment['questions'] if q['id'] not in reliable]
@@ -678,7 +695,10 @@ async def batch_create(
 def batches_list(assessment_id: str) -> list[dict[str, Any]]:
     with transaction() as connection:
         ids = [row[0] for row in connection.execute(
-            "SELECT id FROM grading_batches WHERE assessment_id=? ORDER BY created_at DESC LIMIT 20", (assessment_id,)
+            """SELECT id FROM grading_batches WHERE assessment_id=? AND
+            (status IN ('processing','paused','stopped') OR id IN
+             (SELECT id FROM grading_batches WHERE assessment_id=? ORDER BY created_at DESC LIMIT 20))
+            ORDER BY created_at DESC""", (assessment_id,assessment_id)
         )]
     return [get_batch(batch_id) for batch_id in ids]
 

@@ -22,6 +22,14 @@ from .services.document_renderer import WORD_MEDIA, renderer_status, word_to_pdf
 router = APIRouter()
 
 
+@router.post('/api/batches/{batch_id}/{action}')
+def batch_control_action(batch_id: str,action: str):
+    from .services.batch_control import control_batch
+    try:return control_batch(batch_id,action)
+    except LookupError as exc:raise HTTPException(404,str(exc)) from exc
+    except ValueError as exc:raise HTTPException(409,str(exc)) from exc
+
+
 @router.post('/api/submissions/{submission_id}/questions/{question_id}/confirm-answer')
 def confirm_answer(submission_id: str,question_id: str,payload: AnswerConfirmation):
     from .repository import get_submission,upsert_response

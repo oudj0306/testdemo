@@ -57,3 +57,7 @@ button,.button{display:inline-flex;align-items:center;justify-content:center;gap
 @media(max-width:640px){.usage-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}.answer-overview summary small{display:block;margin:5px 0 0}.question-title-line{align-items:flex-start}.answer-actions button{flex:1;min-width:150px}.batch-progress{padding:16px}.batch-progress .batch-usage{margin-left:-16px;margin-right:-16px;margin-bottom:-16px}.batch-usage>summary{padding:13px 16px}.batch-usage-panel{padding:5px 16px 14px}}
 
 .batch-progress progress::-webkit-progress-bar{background:#eef2fa;border-radius:8px}.batch-progress progress::-webkit-progress-value{background:var(--accent);border-radius:8px}.batch-progress progress::-moz-progress-bar{background:var(--accent);border-radius:8px}
+
+.batch-controls{display:flex;align-items:center;justify-content:space-between;gap:16px;padding-top:15px;margin-top:14px;border-top:1px dashed #e6ebf2}.batch-controls p{font-size:10px;line-height:1.7;color:var(--muted);margin:0;max-width:360px}.batch-controls>div{display:flex;align-items:center;gap:8px;flex-shrink:0}.batch-controls button{font-size:11px;padding:8px 12px;border-radius:7px}.batch-controls .text-button{color:#92786b}.batch-controls button:disabled{opacity:.5;cursor:wait}@media(max-width:640px){.batch-controls{align-items:flex-start;flex-direction:column;gap:10px}.batch-controls>div{align-self:flex-end}}
+
+.batch-question-progress{font-size:11px;color:var(--muted);margin:10px 0 0}.batch-question-progress b{font-weight:600;color:#536586}

@@ -17,6 +17,7 @@ from .review_policy import apply_review_policy, confidence_threshold
 from .grading_executor import question_executor
 from .work_locks import submission_work
 from .telemetry import scope, timed, event
+from .batch_control import checkpoint,controlled,BatchSuspended
 
 
 RULE_MODES = {"exact_text", "choice_set", "numeric", "symbolic"}
@@ -72,6 +73,7 @@ def requires_model(question,response,settings=None):
 
 
 def _grade_question(question, response, settings, submission_id, prepared=None):
+    checkpoint()
     # Independent questions may run together; a question's stability passes
     # remain sequential and use the original stopping/review rules.
     if response and response.get('blank_confirmed') and not str(response.get('raw_text') or '').strip():
@@ -163,12 +165,16 @@ def _grade_submission(submission_id: str, settings: Settings, pending_only: bool
                 "grader_version": decision.grader_version,
             }
         )
+        if controlled():
+            replace_active_grades(submission_id,[output[-1]],partial=True,
+                                  expected_inputs={question['id']:(question,response)},started_at=started_at)
     expected = {q['id']: (q, response_map.get(q['id'])) for q in pending}
     if usage_total["input_tokens"] or usage_total["output_tokens"]:
         record_token_usage(submission["assessment_id"], submission_id, "grade", usage_total["input_tokens"], usage_total["output_tokens"], usage_total["cached_tokens"])
     if failures:
         # Drain every future and record known usage before reporting failure.
         # Preserve the original all-or-nothing grade commit.
-        raise failures[0]
-    replace_active_grades(submission_id, output, partial=pending_only or question_ids is not None, expected_inputs=expected, started_at=started_at)
+        raise next((exc for exc in failures if isinstance(exc,BatchSuspended)),failures[0])
+    if not controlled():
+        replace_active_grades(submission_id, output, partial=pending_only or question_ids is not None, expected_inputs=expected, started_at=started_at)
     return get_submission(submission_id)  # type: ignore[return-value]

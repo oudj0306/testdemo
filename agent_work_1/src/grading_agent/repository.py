@@ -749,9 +749,11 @@ def complete_batch(batch_id: str) -> dict[str, Any]:
         ).fetchone()
         succeeded = int(counts["succeeded"] or 0)
         failed = int(counts["failed"] or 0)
-        total = connection.execute("SELECT total_count FROM grading_batches WHERE id=?", (batch_id,)).fetchone()[0]
+        batch = connection.execute("SELECT total_count,status FROM grading_batches WHERE id=?", (batch_id,)).fetchone()
+        total = batch['total_count']
         finished = succeeded + failed == total
         status = ("completed" if failed == 0 else ("failed" if succeeded == 0 else "partial")) if finished else "processing"
+        if not finished and batch['status'] in {'paused','stopped'}:status=batch['status']
         connection.execute(
             "UPDATE grading_batches SET status=?,success_count=?,failed_count=?,completed_at=? WHERE id=?",
             (status, succeeded, failed, utc_now() if finished else None, batch_id),
@@ -767,4 +769,10 @@ def get_batch(batch_id: str) -> dict[str, Any] | None:
                 connection.execute("SELECT * FROM grading_batch_items WHERE batch_id=? ORDER BY created_at", (batch_id,)).fetchall()
             )
             batch['duplicate_count'] = sum(i['status'] == 'duplicate' for i in batch['items'])
+            batch['active_count']=sum(i['status'] in {'extracting','grading'} for i in batch['items'])
+            batch['settling']=batch['status'] in {'paused','stopped'} and batch['active_count']>0
+            batch['question_count']=connection.execute('SELECT COUNT(*) FROM questions WHERE assessment_id=?',(batch['assessment_id'],)).fetchone()[0]*sum(i['status']!='duplicate' for i in batch['items'])
+            batch['saved_question_count']=connection.execute('''SELECT COUNT(*) FROM grade_items g
+                WHERE g.superseded_at IS NULL AND (g.score IS NOT NULL OR EXISTS(SELECT 1 FROM review_events r WHERE r.grade_item_id=g.id))
+                AND g.submission_id IN (SELECT submission_id FROM grading_batch_items WHERE batch_id=?)''',(batch_id,)).fetchone()[0]
         return batch

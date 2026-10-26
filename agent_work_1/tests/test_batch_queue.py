@@ -72,8 +72,10 @@ def test_queue_restart_does_not_repeat_started_requests(monkeypatch, tmp_path):
             time.sleep(0.02)
     finally:
         queue.close()
-    assert calls == ['b']
-    assert get_batch(batch['id'])['failed_count'] == 2
+    assert calls == []
+    saved=get_batch(batch['id'])
+    assert saved['status']=='paused' and saved['failed_count']==0
+    assert all(item['status']=='queued' for item in saved['items'])
 
 
 def test_draft_batch_rejected(monkeypatch, tmp_path):

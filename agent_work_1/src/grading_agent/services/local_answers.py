@@ -151,7 +151,7 @@ def read_marks(item, aligned_pages, references, metadata, multiple=False, prepar
     return ''.join(sorted(selected)), .97, not selected, measurements
 
 
-def recognize_answers(layout, pages, questions, settings):
+def recognize_answers(layout, pages, questions, settings,on_answer=None):
     """Returns candidate answers plus diagnostics; caller preserves human corrections."""
     output, warnings, diagnostics = [], [], {'version':layout['version'], 'template_id':layout.get('template_id'), 'pages':{}, 'marks':{}}
     if layout.get('stale'):
@@ -191,6 +191,11 @@ def recognize_answers(layout, pages, questions, settings):
     diagnostics['recognitions']={}
     prepared_marks = {}
     for item in layout['items']:
+        from .batch_control import checkpoint,BatchSuspended
+        try:checkpoint()
+        except BatchSuspended as exc:
+            exc.local_result=(output,warnings,diagnostics)
+            raise
         qid = item['question_id']
         if qid not in by_id:
             continue
@@ -294,6 +299,7 @@ def recognize_answers(layout, pages, questions, settings):
                 raise ValueError('识别不确定：浅涂、擦改、多涂或 OCR 置信度不足')
             output.append({'question_id':qid,'raw_text':text,'confidence':confidence,
                            'blank_confirmed':blank,'source':source})
+            if on_answer:on_answer(output[-1])
             event('local_answer', details={'source':source})
         except (ValueError, KeyError, cv2.error) as exc:
             warnings.append(f"{q['question_no']}：{exc}")

@@ -3,6 +3,7 @@ from pathlib import Path
 
 from .answer_extractor import reusable_answer_ids
 from ..repository import get_submission,upsert_response,record_token_usage
+from .batch_control import checkpoint,BatchSuspended
 
 
 def extract_uncertain_question(document,question,settings,diagnostics,layout,extract):
@@ -54,6 +55,7 @@ def supplement_local_answers(submission,questions,document,settings,diagnostics,
     if not settings.hybrid_fallback_enabled:return
     reliable=reusable_answer_ids(questions,get_submission(submission['id'])['responses'],settings)
     for question in questions:
+        checkpoint()
         qid=question['id']
         if qid in reliable:continue
         parts=diagnostics.get('recognitions',{}).get(qid,{}).get('parts',[])
@@ -81,6 +83,7 @@ def supplement_local_answers(submission,questions,document,settings,diagnostics,
             confirmed_blank=answer['blank_confirmed']
             upsert_response(submission['id'],qid,answer['raw_text'],answer['confidence'],confirmed_blank,'api_vision_fallback')
             info['adopted']=bool(answer['raw_text'].strip()) or confirmed_blank
+        except BatchSuspended:raise
         except Exception as exc:
             usage=getattr(exc,'usage',None)
             if usage:
@@ -115,11 +118,13 @@ def supplement_saved_submission(submission,assessment,settings,extract):
         if not path.is_relative_to(settings.data_dir.resolve()) or not path.is_file():raise ValueError('答卷页面不可访问')
         pages.append(NormalizedPage(page['page_no'],path,page['width'],page['height'],page['quality_state'],page['quality_report']))
     document=IngestedDocument(submission['source_hash'],source,submission['media_type'],pages)
-    supplement_local_answers(submission,assessment['questions'],document,settings,diagnostics,load_layout(assessment),extract)
-    current=get_submission(submission['id'])
-    reliable=reusable_answer_ids(assessment['questions'],current['responses'],settings)
-    missing=[q['question_no'] for q in assessment['questions'] if q['id'] not in reliable]
-    diagnostics.update(mode='hybrid',missing=missing)
-    with transaction() as db:
-        db.execute('UPDATE submissions SET status=?,normalization_report=? WHERE id=?',('extraction_failed' if missing else 'extracted',encode_json(report),submission['id']))
+    try:
+        supplement_local_answers(submission,assessment['questions'],document,settings,diagnostics,load_layout(assessment),extract)
+    finally:
+        current=get_submission(submission['id'])
+        reliable=reusable_answer_ids(assessment['questions'],current['responses'],settings)
+        missing=[q['question_no'] for q in assessment['questions'] if q['id'] not in reliable]
+        diagnostics.update(mode='hybrid',missing=missing)
+        with transaction() as db:
+            db.execute('UPDATE submissions SET status=?,normalization_report=? WHERE id=?',('extraction_failed' if missing else 'extracted',encode_json(report),submission['id']))
     return get_submission(submission['id'])

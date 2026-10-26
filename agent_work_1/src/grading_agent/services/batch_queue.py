@@ -16,6 +16,7 @@ from ..repository import complete_batch, get_assessment, get_submission, new_id
 from .grading import grade_submission
 from .work_locks import SubmissionBusyError, submission_work
 from .telemetry import scope, timed, event
+from .batch_control import BatchSuspended,batch_scope,checkpoint,finishing_result
 
 logger = logging.getLogger(__name__)
 
@@ -40,11 +41,11 @@ class BatchQueue:
 
     def start(self):
         with transaction() as connection:
-            # Don't silently repeat potentially billed model calls after a crash.
-            connection.execute("UPDATE grading_batch_items SET status='failed',error='服务中断，请检查已保存答卷后重试' WHERE status IN ('extracting','grading')")
-            # An interrupted upload can leave an incomplete batch count.
-            connection.execute("UPDATE grading_batches SET total_count=(SELECT COUNT(*) FROM grading_batch_items WHERE batch_id=grading_batches.id) WHERE status='processing'")
-            batches = [r[0] for r in connection.execute("SELECT id FROM grading_batches WHERE status='processing'")]
+            # Recover durable progress, but require an explicit resume after a service interruption.
+            connection.execute("UPDATE grading_batches SET status='paused' WHERE id IN (SELECT batch_id FROM grading_batch_items WHERE status IN ('extracting','grading')) AND status='processing'")
+            connection.execute("UPDATE grading_batch_items SET status='queued',error=NULL WHERE status IN ('extracting','grading')")
+            connection.execute("UPDATE grading_batches SET total_count=(SELECT COUNT(*) FROM grading_batch_items WHERE batch_id=grading_batches.id) WHERE status IN ('processing','paused','stopped')")
+            batches = [r[0] for r in connection.execute("SELECT id FROM grading_batches WHERE status IN ('processing','paused','stopped')")]
         for batch_id in batches:
             complete_batch(batch_id)
         for index in range(2):
@@ -54,6 +55,8 @@ class BatchQueue:
 
     def close(self):
         self.stop.set()
+        with transaction() as db:
+            db.execute("UPDATE grading_batches SET status='paused' WHERE status='processing'")
         for thread in self.threads:
             thread.join()
 
@@ -63,13 +66,13 @@ class BatchQueue:
             row = connection.execute("""SELECT i.*,j.content,j.media_type,j.auto_grade,j.answer_layout,b.assessment_id
                 FROM grading_batch_items i JOIN batch_jobs j ON j.item_id=i.id
                 JOIN grading_batches b ON b.id=i.batch_id
-                WHERE i.status='queued' ORDER BY i.created_at LIMIT 1""").fetchone()
+                WHERE i.status='queued' AND b.status='processing' ORDER BY i.created_at LIMIT 1""").fetchone()
             if row:
                 if get_settings().grading_profile == 'daily' and row['auto_grade']:
                     rows = connection.execute('''SELECT i.*,j.content,j.media_type,j.auto_grade,j.answer_layout,b.assessment_id
                         FROM grading_batch_items i JOIN batch_jobs j ON j.item_id=i.id
                         JOIN grading_batches b ON b.id=i.batch_id
-                        WHERE i.status='queued' AND i.batch_id=? AND j.auto_grade=1
+                        WHERE i.status='queued' AND b.status='processing' AND i.batch_id=? AND j.auto_grade=1
                         ORDER BY i.created_at,i.id LIMIT 8''', (row['batch_id'],)).fetchall()
                     connection.executemany("UPDATE grading_batch_items SET status='extracting' WHERE id=?",
                                            [(r['id'],) for r in rows])
@@ -97,7 +100,8 @@ class BatchQueue:
         try:
             guard = (submission_work(get_settings().database_path, job['submission_id'], blocking=False)
                      if job['submission_id'] else nullcontext())
-            with guard:
+            with guard,batch_scope(job['batch_id'],job['id']):
+                checkpoint()
                 settings = get_settings()
                 with scope(settings, batch_id=job['batch_id'], assessment_id=job['assessment_id'],
                            submission_id=job.get('submission_id')):
@@ -107,6 +111,8 @@ class BatchQueue:
                 connection.execute("UPDATE grading_batch_items SET status='completed',error=NULL WHERE id=?", (job['id'],))
                 # Original has been preserved by ingestion; discard the queue-only copy.
                 connection.execute("DELETE FROM batch_jobs WHERE item_id=?", (job['id'],))
+        except BatchSuspended:
+            self.finish(job,requeue=True)
         except SubmissionBusyError:
             # An interactive request or another worker already owns this
             # submission. Keep the durable job queued instead of failing it or
@@ -115,12 +121,12 @@ class BatchQueue:
                 connection.execute("UPDATE grading_batch_items SET status='queued',error=NULL WHERE id=?", (job['id'],))
             self.stop.wait(0.25)
         except Exception as exc:
-            with transaction() as connection:
-                connection.execute("UPDATE grading_batch_items SET status='failed',error=? WHERE id=?", (str(exc)[:500], job['id']))
+            self.finish(job,exc)
         finally:
             complete_batch(job['batch_id'])
 
     def process_submission(self, job):
+        checkpoint()
         assessment = get_assessment(job['assessment_id'])
         submission = get_submission(job['submission_id']) if job['submission_id'] else None
         from .hybrid_recognition import needs_recognition
@@ -135,6 +141,7 @@ class BatchQueue:
                 connection.execute("UPDATE grading_batch_items SET submission_id=? WHERE id=?", (submission['id'], job['id']))
         if submission.get('extraction_warning') and submission.get('normalization_report', {}).get('local_recognition', {}).get('mode') not in {'local_only','hybrid'}:
             raise ValueError("识别失败；可打开答卷校对后重批：" + submission['extraction_warning'])
+        checkpoint()
         if job['auto_grade']:
             with transaction() as connection:
                 connection.execute("UPDATE grading_batch_items SET status='grading' WHERE id=?", (job['id'],))
@@ -149,6 +156,8 @@ class BatchQueue:
     @staticmethod
     def finish(job, error=None, requeue=False):
         with transaction() as db:
+            state=db.execute('SELECT b.status FROM grading_batches b JOIN grading_batch_items i ON i.batch_id=b.id WHERE i.id=?',(job['id'],)).fetchone()
+            if error and state and state['status'] in {'paused','stopped'}:requeue=True
             db.execute('UPDATE grading_batch_items SET status=?,error=? WHERE id=?',
                        ('queued' if requeue else 'failed' if error else 'completed',
                         str(error)[:500] if error else None, job['id']))
@@ -163,16 +172,18 @@ class BatchQueue:
         from .bulk_grader import grade_daily_items
         settings = get_settings()
         ready, groups = [], {}
+        failed_jobs=set()
         batch_id = jobs[0]['batch_id']
-        with ExitStack() as guards, scope(settings, batch_id=batch_id,
+        with ExitStack() as guards,batch_scope(batch_id), scope(settings, batch_id=batch_id,
                                          assessment_id=jobs[0]['assessment_id'], submission_id=None):
             try:
                 for job in jobs:
                     try:
+                        checkpoint()
                         had_submission = bool(job.get('submission_id'))
                         if job.get('submission_id'):
                             guards.enter_context(submission_work(settings.database_path, job['submission_id'], blocking=False))
-                        with scope(settings, submission_id=job.get('submission_id')):
+                        with batch_scope(batch_id,job['id']),scope(settings, submission_id=job.get('submission_id')):
                             self.queue_wait(job)
                             submission = self.process_submission({**job, 'auto_grade': False})
                         job['submission_id'] = submission['id']
@@ -196,6 +207,8 @@ class BatchQueue:
                                     groups.setdefault(key, (grading_question(q), []))[1].append((prepared, response))
                         else:
                             self.finish(job)
+                    except BatchSuspended:
+                        raise
                     except SubmissionBusyError:
                         self.finish(job, requeue=True)
                     except Exception as exc:
@@ -203,6 +216,10 @@ class BatchQueue:
                 with transaction() as db:
                     db.executemany("UPDATE grading_batch_items SET status='grading' WHERE id=?", [(j['id'],) for j, *_ in ready])
                 for question, members in groups.values():
+                    checkpoint()
+                    failed_prepared={id(prepared) for job,prepared,*_ in ready if job['id'] in failed_jobs}
+                    members=[(prepared,response) for prepared,response in members if id(prepared) not in failed_prepared]
+                    if not members:continue
                     items, by_id = [], {}
                     for prepared, response in members:
                         aid = uuid4().hex
@@ -211,13 +228,33 @@ class BatchQueue:
                     decisions = grade_daily_items(question, items, settings)
                     for aid, decision in decisions.items():
                         by_id[aid][question['id']] = decision
+                    # Persist every returned answer before honoring pause/stop on the next request.
+                    with finishing_result():
+                        for job,prepared,expected,started_at in ready:
+                            if job['id'] in failed_jobs:continue
+                            qid=question['id']
+                            if qid in prepared:
+                                try:
+                                    grade_submission(job['submission_id'],settings,pending_only=True,prepared=prepared,
+                                                     expected={qid:expected[qid]},started_at=started_at,question_ids={qid})
+                                except Exception as exc:
+                                    self.finish(job,exc)
+                                    failed_jobs.add(job['id'])
                 for job, prepared, expected, started_at in ready:
+                    if job['id'] in failed_jobs:continue
                     try:
+                        checkpoint()
                         grade_submission(job['submission_id'], settings, pending_only=True,
                                          prepared=prepared, expected=expected, started_at=started_at)
                         self.finish(job)
+                    except BatchSuspended:
+                        raise
                     except Exception as exc:
                         self.finish(job, exc)
+            except BatchSuspended:
+                for job in jobs:
+                    with transaction() as db:
+                        db.execute("UPDATE grading_batch_items SET status='queued',error=NULL WHERE id=? AND status IN ('extracting','grading')",(job['id'],))
             except Exception as exc:
                 for job, *_ in ready:
                     self.finish(job, exc)

@@ -43,10 +43,14 @@ env.pg('answers:one').size=20;env.pg('answers:one').page=1;assert.equal(env.page
 assert.equal(env.answerRecognitionState({responses:[{question_id:'q',raw_text:'42',extraction_source:'api_vision_fallback'}]},{id:'q'}),'API补识 · 已采用');
 assert.equal(env.answerRecognitionState({responses:[],normalization_report:{local_recognition:{api_fallback:{q:{attempted:true,error:'timeout'}}}}},{id:'q'}),'API补识 · 调用失败');
 env.expandedPerformance=new Set();
-vm.runInContext(code.slice(code.indexOf('function batchCardHtml('),code.indexOf('async function refreshBatches(')),env);
+vm.runInContext(code.slice(code.indexOf('function batchControlsHtml('),code.indexOf('async function refreshBatches(')),env);
 const batch=env.batchCardHtml({id:'b',status:'completed',created_at:'2026-10-26',success_count:2,total_count:2,duplicate_count:0,failed_count:0});
 assert(batch.includes('data-batch-usage="b"'));assert(!batch.includes('<button'));
 const stats=env.performanceHtml({wall_ms:1200,requests:1,tokens:{input_tokens:100,output_tokens:5,cached_tokens:0},failed_requests:0,retries:0});
 assert(stats.includes('1.20 秒'));assert(stats.includes('usage-metrics'));
+const running=env.batchControlsHtml({id:'b',status:'processing'});assert(running.includes('data-batch-action="pause"'));assert(running.includes('data-batch-action="stop"'));
+const stopped=env.batchControlsHtml({id:'b',status:'stopped'});assert(stopped.includes('从停止处继续'));assert(stopped.includes('data-batch-action="resume"'));
+const settling=env.batchControlsHtml({id:'b',status:'paused',settling:true});assert(settling.includes('disabled'));
+
 '''
     subprocess.run([node,'-e',script,str(source)],check=True,capture_output=True,text=True)

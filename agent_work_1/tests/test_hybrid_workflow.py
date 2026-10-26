@@ -221,3 +221,55 @@ def test_old_review_required_submission_resumes_api_without_rerunning_local(work
     assert result['normalization_report']['local_recognition']['mode']=='hybrid'
     assert next(g for g in result['grade_items'] if g['question_id']==qs[1]['id'])['score']==5
     assert next(g for g in result['grade_items'] if g['question_id']==qs[0]['id'])['id']==original_grade['id']
+
+
+def test_stop_during_new_upload_keeps_bound_submission_and_completed_local_answer(workspace,monkeypatch):
+    from grading_agent import app as module
+    from grading_agent.repository import create_batch,get_batch
+    from grading_agent.services.batch_queue import BatchQueue,enqueue
+    from grading_agent.services.batch_control import control_batch
+    from test_local_layout import data
+    client,a,qs,doc,source,calls=workspace;generate(workspace);enable_hybrid(monkeypatch)
+    b=create_batch(a['id'],1)
+    original=module.upsert_response
+    def save(*args,**kwargs):
+        result=original(*args,**kwargs)
+        if args[1]==qs[0]['id']:control_batch(b['id'],'stop')
+        return result
+    monkeypatch.setattr(module,'upsert_response',save)
+    enqueue(b['id'],'synthetic.png','synthetic',data(mark(source)),'image/png',True)
+    queue=BatchQueue(module.persist_submission,module.prepare_submission)
+    queue.process_daily(queue.claim()['daily_group'])
+    saved=get_batch(b['id']);sid=saved['items'][0]['submission_id']
+    assert sid and saved['status']=='stopped' and saved['items'][0]['status']=='queued'
+    assert len(get_submission(sid)['responses'])==1
+    monkeypatch.setattr(module,'upsert_response',original)
+    attempts=[]
+    def extract(*args,**kwargs):
+        attempts.append(True)
+        return [dict(question_no=qs[1]['question_no'],raw_text='42',confidence=.99,blank_confirmed=False)],dict(input_tokens=2,output_tokens=1,cached_tokens=0)
+    monkeypatch.setattr(module,'extract_answers_with_model',extract)
+    control_batch(b['id'],'resume');queue.process_daily(queue.claim()['daily_group'])
+    assert len(attempts)==1 and get_batch(b['id'])['status']=='completed'
+    assert get_batch(b['id'])['items'][0]['submission_id']==sid
+    assert len(get_submission(sid)['grade_items'])==2
+
+
+def test_api_inflight_result_is_saved_before_stop_and_not_requested_on_resume(workspace,monkeypatch):
+    from grading_agent import app as module
+    from grading_agent.repository import get_batch
+    from grading_agent.services.batch_queue import BatchQueue,enqueue_saved
+    from grading_agent.services.batch_control import control_batch
+    client,a,qs,doc,source,calls=workspace;generate(workspace)
+    monkeypatch.setattr('grading_agent.services.ingestion.OCRAdapter.extract',lambda *a:('uncertain',.3,'ocr'))
+    student=upload(workspace,unreadable_image(source));sid=student['id']
+    b=enqueue_saved(a['id'],[sid]);enable_hybrid(monkeypatch);attempts=[]
+    def extract(*args,**kwargs):
+        attempts.append(True);control_batch(b['id'],'pause')
+        return [dict(question_no=qs[1]['question_no'],raw_text='42',confidence=.99,blank_confirmed=False)],dict(input_tokens=2,output_tokens=1,cached_tokens=0)
+    monkeypatch.setattr(module,'extract_answers_with_model',extract)
+    queue=BatchQueue(module.persist_submission,module.prepare_submission)
+    queue.process_daily(queue.claim()['daily_group'])
+    assert get_batch(b['id'])['status']=='paused' and len(get_submission(sid)['responses'])==2
+    control_batch(b['id'],'resume');queue.process_daily(queue.claim()['daily_group'])
+    assert len(attempts)==1 and get_batch(b['id'])['status']=='completed'

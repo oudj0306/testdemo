@@ -99,7 +99,7 @@ function renderSubmissions(){
  $('contextStats').innerHTML='<span><b>'+all.length+'</b>份答卷</span><span><b>'+all.filter(s=>['uploaded','extracted','extraction_failed'].includes(s.status)).length+'</b>待批阅</span><span><b>'+pending+'</b>建议复核</span>';
  $('reviewNavCount').hidden=!pending;$('reviewNavCount').textContent=pending;
  const empty='<div class="empty"><strong>'+ (term?'没有匹配的答卷':'还没有答卷')+'</strong>'+(term?'换个姓名或文件名试试。':'先在答卷收集页上传文件。')+'</div>';
- const state=s=>activeJobs.has(s.id)?({queued:'排队中',extracting:'识别中',grading:'批阅中'}[activeJobs.get(s.id)]||'处理中'):(s.status==='finalized'&&s.review_recommended_count>0?'已出分 · 建议复核':statusText[s.status]||s.status);
+ const state=s=>activeJobs.has(s.id)?({queued:'排队中',extracting:'识别中',grading:'批阅中',paused:'已暂停',stopped:'已停止 · 可继续'}[activeJobs.get(s.id)]||'处理中'):(s.status==='finalized'&&s.review_recommended_count>0?'已出分 · 建议复核':statusText[s.status]||s.status);
  const badge=s=>'<span class="badge '+(s.status==='review_required'||s.status==='extraction_failed'?'warn':s.status==='finalized'?'':'neutral')+'">'+esc(state(s))+'</span>';
  const meta=s=>'<span class="avatar" aria-hidden="true">'+esc(s.student_ref.slice(0,1))+'</span><div class="student-meta"><strong>'+esc(s.student_ref)+'</strong><small>'+esc(new Date(s.created_at).toLocaleString())+(s.normalization_report?.answer_layout==='on_paper'?' · 卷面作答':s.normalization_report?.answer_layout==='answer_list'?' · 仅答案列表':'')+'</small></div>';
  $('uploadedList').innerHTML=pageSlice(rows,'upload').map(s=>'<div class="submission-row">'+meta(s)+badge(s)+'<div class="row-actions"><button class="secondary" data-source="'+s.id+'">预览</button><button class="text-button danger" data-del="'+s.id+'" '+(activeJobs.has(s.id)?'disabled title="处理中不能删除"':'')+'>删除</button></div></div>').join('')||empty;
@@ -236,26 +236,39 @@ action('generate',async()=>{await ensureAssessmentQuestions(aid());const r=await
 action('fillMissing',async()=>{const id=aid();const r=await api('/api/assessments/'+id+'/fill-missing',{method:'POST'});if(!r.filled){notice('没有缺失的答案或评分标准，无需补全。');return;}await loadAssessment();notice('已补全 '+r.filled+' 道题的缺失内容，请展开检查并确认。');});
 action('confirm',async()=>{if(!confirm('确认已检查每题答案与评分细则？'))return;await api('/api/assessments/'+aid()+'/confirm-candidate-key',{method:'POST'});await loadAssessment();notice('答案已确认。');});
 action('publish',async()=>{const id=aid();await api('/api/assessments/'+id+'/publish',{method:'POST'});await assessments(id);notice('试卷已发布，可以上传答卷。');});
+function batchControlsHtml(b){
+ if(!['processing','paused','stopped'].includes(b.status))return '';
+ const button=(action,label,kind='secondary')=>'<button class="'+kind+'" data-batch-action="'+action+'" data-batch-id="'+b.id+'" '+(b.settling?'disabled':'')+'>'+label+'</button>';
+ return '<div class="batch-controls"><p>'+(b.settling?'正在保存当前题目结果，完成后即可继续。':b.status==='processing'?'暂停或停止会保留进度，当前题目完成后生效。':'已保存识别与评分进度，继续时跳过已完成题目。')+'</p><div>'+(b.status==='processing'?button('pause','暂停批阅')+button('stop','停止批阅','text-button'):button('resume',b.status==='stopped'?'从停止处继续':'继续批阅')+(b.status==='paused'?button('stop','停止批阅','text-button'):''))+'</div></div>';
+}
 function batchCardHtml(b){
- const active=b.status==='processing';
- return '<section class="batch-progress"><div class="batch-heading"><div><span class="batch-eyebrow">批阅批次</span><time>'+esc(new Date(b.created_at).toLocaleString())+'</time></div><span class="badge '+(active?'':'neutral')+'">'+(active?'正在处理':'已结束')+'</span></div><progress aria-label="批阅进度" value="'+(b.success_count+b.failed_count)+'" max="'+Math.max(1,b.total_count)+'"></progress><div class="batch-counts"><strong>'+b.success_count+' <span>/ '+b.total_count+' 份已完成</span></strong><span>'+(b.duplicate_count?b.duplicate_count+' 份重复跳过':'无重复答卷')+(b.failed_count?' · '+b.failed_count+' 份失败':'')+'</span></div><details class="batch-usage" data-batch-usage="'+b.id+'" '+(expandedPerformance.has(b.id)?'open':'')+'><summary><span>耗时与用量</span><span class="usage-disclosure">查看明细 <svg viewBox="0 0 16 16" aria-hidden="true"><path d="m5 3 5 5-5 5"/></svg></span></summary><div class="batch-usage-panel" role="status">正在读取本批次统计…</div></details>'+(b.failed_count?'<details class="batch-errors"><summary>查看失败原因</summary>'+b.items.filter(i=>i.error).map(i=>'<p class="batch-error">'+esc(i.filename)+'：'+esc(i.error)+'</p>').join('')+'</details>':'')+'</section>';
+ const active=b.status==='processing',label=b.settling?(b.status==='paused'?'正在暂停':'正在停止'):(b.status==='paused'?'已暂停':b.status==='stopped'?'已停止 · 进度保留':active?'正在处理':'已结束');
+ return '<section class="batch-progress"><div class="batch-heading"><div><span class="batch-eyebrow">批阅批次</span><time>'+esc(new Date(b.created_at).toLocaleString())+'</time></div><span class="badge '+(active?'':'neutral')+'">'+label+'</span></div><progress aria-label="批阅进度" value="'+(b.success_count+b.failed_count)+'" max="'+Math.max(1,b.total_count)+'"></progress><div class="batch-counts"><strong>'+b.success_count+' <span>/ '+b.total_count+' 份已完成</span></strong><span>'+(b.duplicate_count?b.duplicate_count+' 份重复跳过':'无重复答卷')+(b.failed_count?' · '+b.failed_count+' 份失败':'')+'</span></div>'+(b.question_count?'<p class="batch-question-progress">已保存评分 <b>'+(b.saved_question_count||0)+'</b> / '+b.question_count+' 题</p>':'')+batchControlsHtml(b)+'<details class="batch-usage" data-batch-usage="'+b.id+'" '+(expandedPerformance.has(b.id)?'open':'')+'><summary><span>耗时与用量</span><span class="usage-disclosure">查看明细 <svg viewBox="0 0 16 16" aria-hidden="true"><path d="m5 3 5 5-5 5"/></svg></span></summary><div class="batch-usage-panel" role="status">正在读取本批次统计…</div></details>'+(b.failed_count?'<details class="batch-errors"><summary>查看失败原因</summary>'+b.items.filter(i=>i.error).map(i=>'<p class="batch-error">'+esc(i.filename)+'：'+esc(i.error)+'</p>').join('')+'</details>':'')+'</section>';
 }
 function performanceHtml(p){
  const metrics=[['总耗时',(p.wall_ms/1000).toFixed(2)+' 秒'],['模型请求',p.requests+' 次'],['输入 token',p.tokens.input_tokens],['输出 token',p.tokens.output_tokens],['缓存 token',p.tokens.cached_tokens],['失败 / 补请求',p.failed_requests+' / '+p.retries]];
- return '<div class="usage-metrics">'+metrics.map(([label,value])=>'<div><span>'+esc(label)+'</span><strong>'+esc(value)+'</strong></div>').join('')+'</div><p class="usage-note">仅统计本批次实际用量；未配置模型价格时不估算费用。</p>';
+ return '<div class="usage-metrics">'+metrics.map(([label,value])=>'<div><span>'+esc(label)+'</span><strong>'+esc(value)+'</strong></div>').join('')+'</div><p class="usage-note">仅统计实际请求用量；总耗时包含暂停等待，未配置价格时不估算费用。</p>';
 }
 async function refreshBatches(id){
  clearTimeout(batchTimer);
  try{
   const rows=await api('/api/batches?assessment_id='+encodeURIComponent(id));
   if($('assessment').value!==id)return;
-  activeJobs=new Map(rows.flatMap(b=>b.items).filter(i=>['queued','extracting','grading'].includes(i.status)&&i.submission_id).map(i=>[i.submission_id,i.status]));
-  const active=rows.filter(b=>b.status==='processing');
-  $('queueState').textContent=active.length?activeJobs.size+' 份处理中':'没有运行中的任务';
+  activeJobs=new Map(rows.flatMap(b=>b.items.map(i=>({...i,displayStatus:['paused','stopped'].includes(b.status)?b.status:i.status}))).filter(i=>['queued','extracting','grading'].includes(i.status)&&i.submission_id).map(i=>[i.submission_id,i.displayStatus]));
+  const active=rows.filter(b=>b.status==='processing'),held=rows.filter(b=>['paused','stopped'].includes(b.status)),settling=held.some(b=>b.settling);
+  const runnable=active.reduce((n,b)=>n+b.items.filter(i=>['queued','extracting','grading'].includes(i.status)).length,0);
+  $('queueState').textContent=active.length?runnable+' 份处理中':held.length?held.length+' 批已暂停或停止 · 进度保留':'没有运行中的任务';
   $('queueState').className='badge '+(active.length?'':'neutral');
-  const shown=active.length?active:rows.slice(0,1);
+  const outstanding=rows.filter(b=>['processing','paused','stopped'].includes(b.status));
+  const shown=outstanding.length?outstanding:rows.slice(0,1);
   $('batchResults').innerHTML=shown.map(batchCardHtml).join('');
   await submissions();
+  document.querySelectorAll('[data-batch-action]').forEach(button=>button.onclick=async()=>{
+   const batchId=button.dataset.batchId,action=button.dataset.batchAction;
+   const buttons=[...$('batchResults').querySelectorAll('[data-batch-id="'+batchId+'"]')];buttons.forEach(b=>b.disabled=true);
+   try{await api('/api/batches/'+batchId+'/'+action,{method:'POST'});performanceCache.delete(batchId);await refreshBatches(id);notice(action==='resume'?'已从保存处继续批阅，已完成题目不会重批。':'已收到'+(action==='pause'?'暂停':'停止')+'请求；当前题目完成并保存后生效。');}
+   catch(e){notice(e.message,true);buttons.forEach(b=>b.disabled=false);}
+  });
   document.querySelectorAll('[data-batch-usage]').forEach(details=>{
    const batch=shown.find(b=>b.id===details.dataset.batchUsage);
    let loading=false;
@@ -266,14 +279,14 @@ async function refreshBatches(id){
     try{
      const cached=performanceCache.get(batch.id),data=cached||await api('/api/batches/'+batch.id+'/performance');
      if(!details.isConnected||$('assessment').value!==id)return;
-     if(batch.status!=='processing')performanceCache.set(batch.id,data);
+     if(!['processing','paused','stopped'].includes(batch.status))performanceCache.set(batch.id,data);
      panel.innerHTML=performanceHtml(data);
     }catch(e){if(details.isConnected)panel.textContent='用量读取失败：'+e.message+'。收起后展开可重试。';}finally{loading=false;}
    }
    details.ontoggle=()=>{if(details.open)loadPerformance();else expandedPerformance.delete(batch.id);};
    if(details.open)loadPerformance();
   });
-  if(active.length)batchTimer=setTimeout(()=>refreshBatches(id),2500);
+  if(active.length||settling)batchTimer=setTimeout(()=>refreshBatches(id),2500);
  }catch(e){if($('assessment').value===id){notice('进度读取失败，稍后自动重试：'+e.message,true);batchTimer=setTimeout(()=>refreshBatches(id),5000);}}
 }
 function showChosenFiles(files){
