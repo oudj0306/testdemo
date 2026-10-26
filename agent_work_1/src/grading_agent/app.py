@@ -145,6 +145,7 @@ def persist_submission(
             upsert_response(submission['id'], answer['question_id'], answer['raw_text'],
                             answer['confidence'], answer['blank_confirmed'], answer['source'])
         from .services.hybrid_recognition import supplement_local_answers
+        diagnostics['warnings']=warnings
         supplement_local_answers(submission,assessment['questions'],document,settings,diagnostics,local_layout,extract_answers_with_model)
         saved = get_submission(submission['id'])
         reliable = reusable_answer_ids(assessment['questions'], saved['responses'], settings)

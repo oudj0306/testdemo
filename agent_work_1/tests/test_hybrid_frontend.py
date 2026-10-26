@@ -25,5 +25,28 @@ assert(html.includes('人工确认未作答'));assert(html.includes('候选待�
 vm.runInContext(code.slice(code.indexOf('function draftValue('),code.indexOf('function hasDraft(')),env);
 assert.equal(env.draftValue({type:'checkbox',value:'on',checked:false}),'false');
 assert.equal(env.draftValue({type:'checkbox',value:'on',checked:true}),'true');
+assert.deepEqual(Array.from(env.reviewQuestionOrder([{question_no:'二-10'},{question_no:'二-2'},{question_no:'二-1'}]),q=>q.question_no),['二-1','二-2','二-10']);
+// Pagination keeps original question indices, so page two cannot edit page one's answers.
+const fields={pager:{innerHTML:''}};env.$=id=>fields[id];
+vm.runInContext(code.slice(code.indexOf('const pageState ='),code.indexOf('function sortList(')),env);
+env.pg=vm.runInContext('pg',env);
+vm.runInContext(code.slice(code.indexOf('function renderPager('),code.indexOf('function onPagerChange(')),env);
+const many=Array.from({length:23},(_,i)=>({q:{id:'q'+i,question_no:String(i+1)},i}));
+env.pg('answers:one').page=2;
+const second=env.pageSlice(many,'answers:one');assert.equal(second.length,10);assert.equal(second[0].i,10);
+const paged=env.answerOverviewHtml({responses:[]},many.map(x=>x.q),second,false);
+assert(paged.includes('data-answer-question="10"'));assert(!paged.includes('data-answer-question="0"'));
+assert(!paged.includes('answer-overview" open'));
+env.renderPager('pager','answers:one',23,'题');assert(fields.pager.innerHTML.includes('共 23 题 · 2 / 3 页'));
+env.pg('answers:one').page=3;assert.equal(env.pageSlice(many,'answers:one').length,3);
+env.pg('answers:one').size=20;env.pg('answers:one').page=1;assert.equal(env.pageSlice(many,'answers:one').length,20);
+assert.equal(env.answerRecognitionState({responses:[{question_id:'q',raw_text:'42',extraction_source:'api_vision_fallback'}]},{id:'q'}),'API补识 · 已采用');
+assert.equal(env.answerRecognitionState({responses:[],normalization_report:{local_recognition:{api_fallback:{q:{attempted:true,error:'timeout'}}}}},{id:'q'}),'API补识 · 调用失败');
+env.expandedPerformance=new Set();
+vm.runInContext(code.slice(code.indexOf('function batchCardHtml('),code.indexOf('async function refreshBatches(')),env);
+const batch=env.batchCardHtml({id:'b',status:'completed',created_at:'2026-10-26',success_count:2,total_count:2,duplicate_count:0,failed_count:0});
+assert(batch.includes('data-batch-usage="b"'));assert(!batch.includes('<button'));
+const stats=env.performanceHtml({wall_ms:1200,requests:1,tokens:{input_tokens:100,output_tokens:5,cached_tokens:0},failed_requests:0,retries:0});
+assert(stats.includes('1.20 秒'));assert(stats.includes('usage-metrics'));
 '''
     subprocess.run([node,'-e',script,str(source)],check=True,capture_output=True,text=True)

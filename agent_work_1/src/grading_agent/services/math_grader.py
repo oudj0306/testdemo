@@ -82,7 +82,7 @@ def grade_with_rules(question: dict[str, Any], response: dict[str, Any] | None) 
 
     confidence = response.get("ocr_confidence")
     minimum_confidence = float(question.get("rule_config", {}).get("minimum_ocr_confidence", 0.85))
-    if confidence is not None and float(confidence) < minimum_confidence:
+    if response.get('extraction_source')!='api_vision_fallback' and confidence is not None and float(confidence) < minimum_confidence:
         return GradeDecision(
             None,
             max_score,

@@ -31,7 +31,11 @@ def supplement_local_answers(submission,questions,document,settings,diagnostics,
     for question in questions:
         qid=question['id']
         if qid in reliable:continue
-        info={'question_no':question['question_no'],'attempted':False}
+        parts=diagnostics.get('recognitions',{}).get(qid,{}).get('parts',[])
+        reasons=list(dict.fromkeys(issue for part in parts for issue in part.get('issues',[])))
+        reasons+= [w.split('：',1)[-1] for w in diagnostics.get('warnings',[]) if w.startswith(question['question_no']+'：')]
+        info={'question_no':question['question_no'],'attempted':False,
+              'trigger_reasons':list(dict.fromkeys(reasons)) or ['本地未取得可靠的完整作答']}
         diagnostics['api_fallback'][qid]=info
         if not settings.openai_api_key or not settings.llm_extract_answers:
             info['error']='未启用视觉API识别或尚未配置API密钥，可人工确认作答'
@@ -50,6 +54,7 @@ def supplement_local_answers(submission,questions,document,settings,diagnostics,
             if qid in reusable_answer_ids(questions,current['responses'],settings):continue
             confirmed_blank=answer['blank_confirmed'] and answer['confidence']>=confidence_threshold(question,settings)
             upsert_response(submission['id'],qid,answer['raw_text'],answer['confidence'],confirmed_blank,'api_vision_fallback')
+            info['adopted']=bool(answer['raw_text'].strip()) or confirmed_blank
         except Exception as exc:
             usage=getattr(exc,'usage',None)
             if usage:record_token_usage(submission['assessment_id'],submission['id'],'extract_fallback',usage['input_tokens'],usage['output_tokens'],usage['cached_tokens'])

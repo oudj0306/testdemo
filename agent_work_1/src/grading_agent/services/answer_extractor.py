@@ -127,6 +127,11 @@ def reusable_answer_ids(questions, responses, settings):
         confidence = response.get('ocr_confidence')
         try:
             valid_confidence = confidence is not None and math.isfinite(float(confidence)) and 0 <= float(confidence) <= 1
+            # API fallback is the final transcription route, not another local OCR pass.
+            # Nonempty valid output is used for grading; confidence still controls review hints.
+            if response.get('extraction_source')=='api_vision_fallback' and text_present and valid_confidence:
+                reusable.add(question_id)
+                continue
             if valid_confidence and float(confidence) >= confidence_threshold(by_id[question_id], settings):
                 reusable.add(question_id)
         except (TypeError, ValueError):

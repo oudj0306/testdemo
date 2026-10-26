@@ -144,3 +144,25 @@ def test_missing_page_cannot_be_sent_to_api_or_assumed_blank(tmp_path):
     document=IngestedDocument('hash',tmp_path/'missing.png','image/png',[])
     with pytest.raises(ValueError,match='页面缺失'):
         extract_uncertain_question(document,question,config.get_settings(),{},layout,lambda *a,**kw:pytest.fail('missing page must not call API'))
+
+
+@pytest.mark.parametrize('issue',['两次转写存在差异，不能自动确定','检测到涂改，即使两次一致也须补识','文字难以辨认'])
+def test_local_special_cases_automatically_use_api_result(workspace,monkeypatch,issue):
+    client,a,qs,doc,source,calls=workspace;generate(workspace);enable_visual(monkeypatch);enable_hybrid(monkeypatch)
+    monkeypatch.setattr(vision,'transcribe',lambda *args:dict(text='local candidate',consistent=False,issues=[issue],blank_candidate=False,requests=[]))
+    requests=[]
+    def extract(*args,**kwargs):
+        requests.append(kwargs)
+        return [dict(question_no=qs[1]['question_no'],raw_text='42',confidence=.3,blank_confirmed=False)],dict(input_tokens=10,output_tokens=2,cached_tokens=0)
+    monkeypatch.setattr('grading_agent.app.extract_answers_with_model',extract)
+    student=upload(workspace,unreadable_image(source))
+    response=next(r for r in student['responses'] if r['question_id']==qs[1]['id'])
+    assert response['extraction_source']=='api_vision_fallback' and response['raw_text']=='42'
+    assert response['ocr_confidence']==.3  # No fabricated confidence boost.
+    info=student['normalization_report']['local_recognition']['api_fallback'][qs[1]['id']]
+    assert info['adopted'] and issue in info['trigger_reasons']
+    assert student['normalization_report']['local_recognition']['missing']==[]
+    result=client.post(f"/api/submissions/{student['id']}/grade").json()
+    grade=next(g for g in result['grade_items'] if g['question_id']==qs[1]['id'])
+    assert grade['score']==5 and grade['grader_kind']=='rules' and grade['needs_review']
+    assert len(requests)==1

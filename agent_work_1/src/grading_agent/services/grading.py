@@ -39,7 +39,7 @@ def grade_submission(submission_id: str, settings: Settings, pending_only: bool 
 def reliable_text(response):
     return bool(response
             and str(response.get('raw_text', '')).strip()
-            and (response.get('extraction_source') in {'manual','local_vlm_consistent'} or (
+            and (response.get('extraction_source') in {'manual','local_vlm_consistent','api_vision_fallback'} or (
                 response.get('ocr_confidence') is not None
                 and math.isfinite(float(response['ocr_confidence']))
                 and float(response['ocr_confidence']) >= 0.5)))
@@ -100,7 +100,7 @@ def _grade_question(question, response, settings, submission_id, prepared=None):
                 None, float(question["max_score"]), ScoreState.BLOCKED, True,
                 ["blank_not_confirmed" if response else "answer_missing"],
             )
-    elif response.get('extraction_source') not in {'manual','local_vlm_consistent'} and (
+    elif response.get('extraction_source') not in {'manual','local_vlm_consistent','api_vision_fallback'} and (
         response.get('ocr_confidence') is None or not math.isfinite(float(response['ocr_confidence'])) or
         float(response['ocr_confidence']) < 0.5
     ):
