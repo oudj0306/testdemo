@@ -42,8 +42,8 @@ env.pg('answers:one').page=3;assert.equal(env.pageSlice(many,'answers:one').leng
 env.pg('answers:one').size=20;env.pg('answers:one').page=1;assert.equal(env.pageSlice(many,'answers:one').length,20);
 assert.equal(env.answerRecognitionState({responses:[{question_id:'q',raw_text:'42',extraction_source:'api_vision_fallback'}]},{id:'q'}),'API补识 · 已采用');
 assert.equal(env.answerRecognitionState({responses:[],normalization_report:{local_recognition:{api_fallback:{q:{attempted:true,error:'timeout'}}}}},{id:'q'}),'API补识 · 调用失败');
-env.expandedPerformance=new Set();
-vm.runInContext(code.slice(code.indexOf('function batchControlsHtml('),code.indexOf('async function refreshBatches(')),env);
+env.expandedPerformance=new Set();env.batchControlsSupport=true;env.pendingBatchControls=new Set();
+vm.runInContext(code.slice(code.indexOf('function batchControlsHtml('),code.indexOf('async function ensureBatchControls(')),env);
 const batch=env.batchCardHtml({id:'b',status:'completed',created_at:'2026-10-26',success_count:2,total_count:2,duplicate_count:0,failed_count:0});
 assert(batch.includes('data-batch-usage="b"'));assert(!batch.includes('<button'));
 const stats=env.performanceHtml({wall_ms:1200,requests:1,tokens:{input_tokens:100,output_tokens:5,cached_tokens:0},failed_requests:0,retries:0});
@@ -51,6 +51,40 @@ assert(stats.includes('1.20 秒'));assert(stats.includes('usage-metrics'));
 const running=env.batchControlsHtml({id:'b',status:'processing'});assert(running.includes('data-batch-action="pause"'));assert(running.includes('data-batch-action="stop"'));
 const stopped=env.batchControlsHtml({id:'b',status:'stopped'});assert(stopped.includes('从停止处继续'));assert(stopped.includes('data-batch-action="resume"'));
 const settling=env.batchControlsHtml({id:'b',status:'paused',settling:true});assert(settling.includes('disabled'));
+env.batchControlsSupport=false;const unavailable=env.batchControlsHtml({id:'b',status:'processing'});assert(unavailable.includes('Ctrl+C'));assert(!unavailable.includes('<button'));
+env.batchControlsSupport=true;env.pendingBatchControls.add('b');assert(env.batchControlsHtml({id:'b',status:'processing'}).includes('disabled'));
+
 
 '''
-    subprocess.run([node,'-e',script,str(source)],check=True,capture_output=True,text=True)
+    subprocess.run([node,'-e',script,str(source)],check=True,capture_output=True,text=True,encoding='utf-8')
+
+
+def test_control_handler_is_delegated_immediate_and_blocks_duplicate_requests():
+    node=shutil.which('node')
+    if not node:pytest.skip('Node unavailable')
+    source=Path(__file__).resolve().parents[1]/'src/grading_agent/static/app.js'
+    script=r'''
+const fs=require('fs'),vm=require('vm'),assert=require('assert');
+const code=fs.readFileSync(process.argv[1],'utf8');
+let finish,requests=0,refreshes=0,handler;
+const feedback={textContent:'',classList:{add(){}}};
+const button={disabled:false,dataset:{batchId:'one',batchAction:'pause'},closest:()=>card};
+const card={querySelector:()=>feedback,querySelectorAll:()=>[button]};
+const root={addEventListener:(name,callback)=>handler=callback,contains:()=>true};
+const env={$:()=>root,aid:()=> 'assessment',pendingBatchControls:new Set(),performanceCache:new Map(),batchTimer:null,clearTimeout(){},setTimeout(){},notice(){},api:async()=>{requests++;return new Promise(resolve=>finish=resolve);},refreshBatches:async()=>{refreshes++;}};
+vm.createContext(env);
+vm.runInContext(code.slice(code.indexOf('async function handleBatchControlClick('),code.indexOf('async function refreshBatches(')),env);
+assert.equal(typeof handler,'function');
+(async()=>{
+ const event={target:{closest:()=>button}};
+ const pending=handler(event);
+ assert(button.disabled);assert(feedback.textContent.length>0);assert.equal(requests,1);
+ await handler(event);assert.equal(requests,1);
+ finish({status:'paused'});await pending;
+ assert.equal(refreshes,1);assert.equal(env.pendingBatchControls.size,0);
+ env.batchCapabilityPromise=null;env.api=async()=>({paths:{}});
+ vm.runInContext(code.slice(code.indexOf('async function ensureBatchControls('),code.indexOf('async function handleBatchControlClick(')),env);
+ await env.ensureBatchControls();assert.equal(env.batchControlsSupport,false);
+})().catch(e=>{console.error(e);process.exitCode=1;});
+'''
+    subprocess.run([node,'-e',script,str(source)],check=True,capture_output=True,text=True,encoding='utf-8')

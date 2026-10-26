@@ -8,7 +8,13 @@ if (-not ($InitDbOnly -or $CheckOcr -or $PrintRuntime)) {
         $taskHealth = Invoke-RestMethod -Uri "http://127.0.0.1:$Port/api/health" -TimeoutSec 2
         if ($taskHealth.status -eq 'ok' -and $null -ne $taskHealth.ocr_runtime -and $null -ne $taskHealth.grading_profile) {
             Write-Host "Optimization service is already running: http://127.0.0.1:$Port/"
-            Write-Host 'Open that URL. To restart after a code update, stop the existing service first.'
+            try {
+                $runningApiSpec = Invoke-RestMethod -Uri "http://127.0.0.1:$Port/openapi.json" -TimeoutSec 2
+                if ($runningApiSpec.paths.PSObject.Properties.Name -notcontains '/api/batches/{batch_id}/{action}') {
+                    Write-Warning 'The running backend is an older version without pause/stop controls. Press Ctrl+C in its original terminal, then run this command again.'
+                }
+            } catch { }
+            Write-Host 'To load code updates, press Ctrl+C in the original service terminal, then run this command again.'
             return
         }
     } catch { }

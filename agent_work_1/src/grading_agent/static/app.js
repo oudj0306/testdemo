@@ -20,6 +20,8 @@ let reportCharts = [];
 let lastReport = null;
 let viewedQuestionIndex = 0, rerenderCurrentQuestion = null, rerenderAnswerOverview = null;
 const expandedPerformance=new Set(),performanceCache=new Map();
+let batchControlsSupport=null,batchCapabilityPromise=null;
+const pendingBatchControls=new Set();
 const pageState = {};
 const pg = key => { if(!pageState[key]) pageState[key]={page:1,size:10}; return pageState[key]; };
 function pageSlice(items, key){ const st=pg(key); const totalPages=Math.max(1,Math.ceil(items.length/st.size)); if(st.page>totalPages)st.page=totalPages; return items.slice((st.page-1)*st.size,st.page*st.size); }
@@ -238,8 +240,9 @@ action('confirm',async()=>{if(!confirm('确认已检查每题答案与评分细�
 action('publish',async()=>{const id=aid();await api('/api/assessments/'+id+'/publish',{method:'POST'});await assessments(id);notice('试卷已发布，可以上传答卷。');});
 function batchControlsHtml(b){
  if(!['processing','paused','stopped'].includes(b.status))return '';
- const button=(action,label,kind='secondary')=>'<button class="'+kind+'" data-batch-action="'+action+'" data-batch-id="'+b.id+'" '+(b.settling?'disabled':'')+'>'+label+'</button>';
- return '<div class="batch-controls"><p>'+(b.settling?'正在保存当前题目结果，完成后即可继续。':b.status==='processing'?'暂停或停止会保留进度，当前题目完成后生效。':'已保存识别与评分进度，继续时跳过已完成题目。')+'</p><div>'+(b.status==='processing'?button('pause','暂停批阅')+button('stop','停止批阅','text-button'):button('resume',b.status==='stopped'?'从停止处继续':'继续批阅')+(b.status==='paused'?button('stop','停止批阅','text-button'):''))+'</div></div>';
+ if(batchControlsSupport===false)return '<div class="batch-controls batch-control-unavailable" role="status"><p><b>当前服务尚未载入暂停、停止接口</b><br>请在原服务终端按 Ctrl+C，重新运行启动命令，再刷新网页。当前批阅仍按原流程运行。</p></div>';
+ const button=(action,label,kind='secondary')=>'<button class="'+kind+'" data-batch-action="'+action+'" data-batch-id="'+b.id+'" '+(b.settling||pendingBatchControls.has(b.id)?'disabled':'')+'>'+label+'</button>';
+ return '<div class="batch-controls"><p>'+(b.settling?'正在保存当前题目结果，完成后即可继续。':b.status==='processing'?'暂停或停止会保留进度，当前题目完成后生效。':'已保存识别与评分进度，继续时跳过已完成题目。')+'</p><div>'+(b.status==='processing'?button('pause','暂停批阅')+button('stop','停止批阅','text-button'):button('resume',b.status==='stopped'?'从停止处继续':'继续批阅')+(b.status==='paused'?button('stop','停止批阅','text-button'):''))+'</div><div class="batch-control-feedback" role="status" aria-live="polite"></div></div>';
 }
 function batchCardHtml(b){
  const active=b.status==='processing',label=b.settling?(b.status==='paused'?'正在暂停':'正在停止'):(b.status==='paused'?'已暂停':b.status==='stopped'?'已停止 · 进度保留':active?'正在处理':'已结束');
@@ -249,10 +252,41 @@ function performanceHtml(p){
  const metrics=[['总耗时',(p.wall_ms/1000).toFixed(2)+' 秒'],['模型请求',p.requests+' 次'],['输入 token',p.tokens.input_tokens],['输出 token',p.tokens.output_tokens],['缓存 token',p.tokens.cached_tokens],['失败 / 补请求',p.failed_requests+' / '+p.retries]];
  return '<div class="usage-metrics">'+metrics.map(([label,value])=>'<div><span>'+esc(label)+'</span><strong>'+esc(value)+'</strong></div>').join('')+'</div><p class="usage-note">仅统计实际请求用量；总耗时包含暂停等待，未配置价格时不估算费用。</p>';
 }
+async function ensureBatchControls(){
+ if(!batchCapabilityPromise)batchCapabilityPromise=(async()=>{
+  try{const spec=await api('/openapi.json');batchControlsSupport=Boolean(spec.paths?.['/api/batches/{batch_id}/{action}']?.post);}
+  catch(e){batchCapabilityPromise=null;throw Error('无法核对批阅控制接口，请检查服务连接：'+e.message);}
+ })();
+ await batchCapabilityPromise;
+}
+async function handleBatchControlClick(event){
+ const button=event.target.closest('[data-batch-action]');if(!button||button.disabled)return;
+ const batchId=button.dataset.batchId,action=button.dataset.batchAction,id=aid();
+ if(pendingBatchControls.has(batchId))return;
+ pendingBatchControls.add(batchId);clearTimeout(batchTimer);
+ const card=button.closest('.batch-progress'),feedback=card.querySelector('.batch-control-feedback');
+ const buttons=[...card.querySelectorAll('[data-batch-action]')];buttons.forEach(b=>b.disabled=true);
+ feedback.textContent='正在发送'+(action==='pause'?'暂停':action==='stop'?'停止':'继续')+'请求…';
+ try{
+  await api('/api/batches/'+batchId+'/'+action,{method:'POST'});performanceCache.delete(batchId);
+  feedback.textContent=action==='resume'?'已收到请求，正在继续批阅。':'请求已收到，正在保存当前题目结果。';
+  pendingBatchControls.delete(batchId);await refreshBatches(id);
+  notice(action==='resume'?'已从保存处继续批阅，已完成题目不会重批。':'已收到'+(action==='pause'?'暂停':'停止')+'请求；当前题目完成并保存后生效。');
+ }catch(e){
+  const message=e.message==='Not Found'?'当前服务没有载入批阅控制接口，请在原服务终端按 Ctrl+C 后重新启动，再刷新网页。':e.message;
+  feedback.textContent=message;feedback.classList.add('error');notice(message,true);buttons.forEach(b=>b.disabled=false);
+ }finally{
+  pendingBatchControls.delete(batchId);
+  if(!$('batchResults').contains(button))return;
+  batchTimer=setTimeout(()=>refreshBatches(id),2500);
+ }
+}
+$('batchResults').addEventListener('click',handleBatchControlClick);
 async function refreshBatches(id){
  clearTimeout(batchTimer);
+ if(pendingBatchControls.size){batchTimer=setTimeout(()=>refreshBatches(id),500);return;}
  try{
-  const rows=await api('/api/batches?assessment_id='+encodeURIComponent(id));
+  const [rows]=await Promise.all([api('/api/batches?assessment_id='+encodeURIComponent(id)),ensureBatchControls()]);
   if($('assessment').value!==id)return;
   activeJobs=new Map(rows.flatMap(b=>b.items.map(i=>({...i,displayStatus:['paused','stopped'].includes(b.status)?b.status:i.status}))).filter(i=>['queued','extracting','grading'].includes(i.status)&&i.submission_id).map(i=>[i.submission_id,i.displayStatus]));
   const active=rows.filter(b=>b.status==='processing'),held=rows.filter(b=>['paused','stopped'].includes(b.status)),settling=held.some(b=>b.settling);
@@ -263,12 +297,6 @@ async function refreshBatches(id){
   const shown=outstanding.length?outstanding:rows.slice(0,1);
   $('batchResults').innerHTML=shown.map(batchCardHtml).join('');
   await submissions();
-  document.querySelectorAll('[data-batch-action]').forEach(button=>button.onclick=async()=>{
-   const batchId=button.dataset.batchId,action=button.dataset.batchAction;
-   const buttons=[...$('batchResults').querySelectorAll('[data-batch-id="'+batchId+'"]')];buttons.forEach(b=>b.disabled=true);
-   try{await api('/api/batches/'+batchId+'/'+action,{method:'POST'});performanceCache.delete(batchId);await refreshBatches(id);notice(action==='resume'?'已从保存处继续批阅，已完成题目不会重批。':'已收到'+(action==='pause'?'暂停':'停止')+'请求；当前题目完成并保存后生效。');}
-   catch(e){notice(e.message,true);buttons.forEach(b=>b.disabled=false);}
-  });
   document.querySelectorAll('[data-batch-usage]').forEach(details=>{
    const batch=shown.find(b=>b.id===details.dataset.batchUsage);
    let loading=false;
