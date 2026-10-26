@@ -22,6 +22,37 @@ from .services.document_renderer import WORD_MEDIA, renderer_status, word_to_pdf
 router = APIRouter()
 
 
+@router.get('/api/submissions/{submission_id}/review-visual')
+@serialized_document_io
+def review_visual(submission_id: str,question_id: str):
+    from .services.review_images import visual_manifest
+    try:return visual_manifest(submission_id,question_id)
+    except LookupError as exc:raise HTTPException(404,str(exc)) from exc
+    except ValueError as exc:raise HTTPException(422,str(exc)) from exc
+
+
+@router.get('/api/submissions/{submission_id}/review-page')
+@serialized_document_io
+def review_student_page(submission_id: str,page: int = Query(1,ge=1)):
+    from .repository import get_submission
+    from .services.review_images import student_page
+    submission=get_submission(submission_id)
+    if not submission:raise HTTPException(404,'答卷不存在')
+    try:
+        with student_page(submission,page) as image:return png(image)
+    except (ValueError,OSError) as exc:raise HTTPException(404,str(exc)) from exc
+
+
+@router.get('/api/submissions/{submission_id}/review-region')
+@serialized_document_io
+def review_student_region(submission_id: str,question_id: str,region: int = Query(0,ge=0)):
+    from .services.review_images import region_image
+    try:
+        with region_image(submission_id,question_id,region) as image:return png(image)
+    except LookupError as exc:raise HTTPException(404,str(exc)) from exc
+    except (ValueError,OSError) as exc:raise HTTPException(422,str(exc)) from exc
+
+
 @router.post('/api/batches/{batch_id}/{action}')
 def batch_control_action(batch_id: str,action: str):
     from .services.batch_control import control_batch

@@ -165,7 +165,8 @@ def test_home_disables_stale_html_cache():
     with TestClient(app) as client:
         response = client.get('/')
         assert response.headers['cache-control'] == 'no-store'
-        assert 'answer-card-v9' in response.text
+        assert '/static/review-evidence.js?v=' in response.text
+        assert response.text.index('/static/review-evidence.js')<response.text.index('/static/app.js')
 
 
 def test_region_pointer_modes_scale_and_work_before_questions():

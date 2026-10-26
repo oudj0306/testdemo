@@ -25,7 +25,7 @@ def register_page(reference, student):
     ref = np.asarray(reference.convert('RGB'))
     src = np.asarray(student.convert('RGB'))
     if ref.shape == src.shape and np.array_equal(ref, src):
-        return ref.copy(), {'method':'identical', 'inliers':0}
+        return ref.copy(), {'method':'identical', 'inliers':0,'source_to_template':[[1,0,0],[0,1,0],[0,0,1]]}
     h, w = ref.shape[:2]
     scale = min(1., 1400 / max(h, w))
     ratio = min(1., 1400 / max(src.shape[:2]))
@@ -64,7 +64,7 @@ def register_page(reference, student):
     warped = cv2.warpPerspective(src, transform, (w,h), borderValue=(255,255,255))
     coverage = cv2.warpPerspective(np.ones(src.shape[:2],np.uint8), transform, (w,h))
     return warped, {'method':'orb_homography', 'inliers':int(inliers.sum()),
-                    'coverage': coverage, 'matched_area':float(hull_area)}
+                    'coverage': coverage, 'matched_area':float(hull_area),'source_to_template':transform.tolist()}
 
 
 def pixel_box(b, shape):
