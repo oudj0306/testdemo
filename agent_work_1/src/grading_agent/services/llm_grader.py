@@ -15,7 +15,7 @@ from .grading_cache import StableGradeCache, cache_key, review_revision
 from .llm_client import parse_json_object, response_output_text, response_usage
 from .model_transport import model_request
 from .math_grader import GradeDecision
-from .telemetry import request_json, scope
+from .telemetry import request_json, scope, event
 
 
 GRADE_SCHEMA = {
@@ -47,9 +47,10 @@ GRADING_ALGORITHM_VERSION = "independent-consensus-v3-concise"
 class GradingResponseError(RuntimeError):
     """A billed response that could not safely be accepted as a grade."""
 
-    def __init__(self, message: str, usage: dict[str, int]):
+    def __init__(self, message: str, usage: dict[str, int], request_id=None):
         super().__init__(message)
         self.usage = usage
+        self.request_id = request_id
 
 
 @dataclass
@@ -144,7 +145,7 @@ class OpenAIGrader:
             if not all(isinstance(s, str) and s.strip() for s in [*parsed['reason_codes'], *parsed['evidence']]):
                 raise ValueError('模型返回的评分证据或原因无效')
         except (RuntimeError, ValueError, KeyError, TypeError) as exc:
-            raise GradingResponseError(str(exc), usage) from exc
+            raise GradingResponseError(str(exc), usage, request_id) from exc
         return LLMResult(
             score=float(parsed["score"]),
             reason_codes=[str(value) for value in parsed["reason_codes"]],
@@ -258,6 +259,7 @@ class OpenAIGrader:
 
     def _daily(self, question, answer, attempts=2):
         usage = {'input_tokens': 0, 'output_tokens': 0, 'cached_tokens': 0}
+        failures=[]
         for attempt in range(attempts):
             try:
                 with scope(self.settings, retry=bool(attempt) or attempts == 1):
@@ -266,28 +268,40 @@ class OpenAIGrader:
                     usage[key] += value
                 decision = daily_decision(question, answer, result.score, result.reason_codes,
                                           result.evidence, result.needs_review, self.settings,
-                                          result.request_id)
+                                          result.request_id, strict_evidence=False)
                 decision.usage = usage
                 return decision
             except (RuntimeError, ValueError, KeyError, TypeError, OSError) as exc:
+                failures.append(f'attempt={attempt+1};{type(exc).__name__}: {str(exc)[:250]}')
+                with scope(self.settings):
+                    event('grading_failure',success=False,details={'attempt':attempt+1,
+                          'error_type':type(exc).__name__,'error':str(exc)[:250],
+                          'request_id':getattr(exc,'request_id',None)})
                 for key, value in getattr(exc, 'usage', {}).items():
                     if key in usage:
                         usage[key] += value
         return GradeDecision(None, float(question['max_score']), ScoreState.BLOCKED, True,
-                             ['llm_request_failed'], grader_kind='llm',
+                             ['llm_request_failed'], evidence=failures,grader_kind='llm',
                              grader_version=self.settings.openai_model, usage=usage)
 
 
-def daily_decision(question, answer, score, reasons, evidence, needs_review, settings, request_id=None):
+def daily_decision(question, answer, score, reasons, evidence, needs_review, settings, request_id=None,strict_evidence=True):
     if type(score) not in (int, float) or not math.isfinite(score) or not 0 <= score <= float(question['max_score']):
         raise ValueError('Invalid score')
     if type(needs_review) is not bool or not isinstance(reasons, list) or not isinstance(evidence, list):
         raise ValueError('Invalid grading fields')
     if not all(isinstance(s, str) and s.strip() for s in [*reasons, *evidence]):
         raise ValueError('Invalid evidence/reasons')
-    if len(evidence) > 10 or any(len(e) > 200 or e not in answer for e in evidence):
-        raise ValueError('Evidence must quote this answer briefly')
+    unverified=len(evidence)>10 or any(len(e)>200 or e not in answer for e in evidence)
+    if unverified:
+        if strict_evidence:raise ValueError('Evidence must quote this answer briefly')
+        # A single-answer request already identifies its student. Keep its valid
+        # numeric suggestion, discard ungrounded quotations and require review.
+        # Bulk responses remain strict to detect cross-student contamination.
+        evidence=[e for e in evidence[:10] if len(e)<=200 and e in answer]
+        needs_review=True
     codes = list(dict.fromkeys([*reasons, 'daily_single_pass']))
+    if unverified:codes.append('grading_evidence_unverified')
     if not evidence:
         codes.append('grading_evidence_missing')
     return GradeDecision(float(score), float(question['max_score']), ScoreState.AUTO_SINGLE,

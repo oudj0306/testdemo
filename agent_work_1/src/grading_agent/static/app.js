@@ -36,6 +36,7 @@ let viewedSubmission = null;
 const reviewReasons={quality_spot_check:'质量抽检',extraction_uncertain:'识别置信不足',ocr_confidence_too_low:'识别置信不足',score_disagreement:'多次评分有分歧',model_requested_review:'模型发现疑问',provisional_answer_key:'标准答案未确认',rubric_incomplete:'评分细则不完整',teacher_review_policy:'策略提示复核',insufficient_independent_passes:'评分次数不足',grading_evidence_missing:'缺少评分证据',answer_missing:'作答缺失',llm_request_failed:'模型调用失败'};
 Object.assign(reviewReasons,{numeric_match:'数值匹配',numeric_mismatch:'数值不匹配',exact_match:'答案匹配',exact_mismatch:'答案不匹配',choice_set_match:'选项匹配',choice_set_mismatch:'选项不匹配',symbolic_match:'表达式等价',symbolic_mismatch:'表达式不等价',rubric_assisted:'按细则评分',confirmed_blank:'确认空白',blank_not_confirmed:'空白尚未确认',llm_not_configured:'模型未配置'});
 Object.assign(reviewReasons,{fixed_answers_match:'逐空答案匹配',fixed_answers_partial:'逐空规则计分',correct:'答案正确',partial:'部分得分',incorrect:'答案错误',insufficient_evidence:'作答证据不足',ambiguous_answer:'作答有歧义',rubric_issue:'评分细则需检查',rule_fallback_to_model:'规则疑难已交模型判分'});
+Object.assign(reviewReasons,{grading_evidence_unverified:'评分证据未逐字匹配，建议核对',grading_evidence_missing:'缺少可核验的评分证据'});
 
 function fixedAnswerEditor(q){
  if(['single_choice','multiple_choice'].includes(q.question_type))return '';
@@ -213,6 +214,12 @@ async function openSubmission(id,{force=false}={}){
    panel.className='review-decision-panel';panel.setAttribute('aria-label','本题评分与复核操作');
    const reason=score?.nextElementSibling,reviewForm=area.querySelector('form');
    if(score)panel.append(score);if(reason)panel.append(reason);if(reviewForm)panel.append(reviewForm);
+   if(g.score==null&&g.final_score==null&&g.reason_codes.includes('llm_request_failed')){
+    const detail=document.createElement('p'),errors=(g.evidence||[]).filter(e=>!e.startsWith('review_policy='));
+    detail.className='helper-note';detail.setAttribute('role','status');
+    detail.textContent='未出分原因：'+(errors.length?errors.slice(0,2).join('；'):'这条旧记录未保存具体失败原因。新版会保留错误详情，请先更新并重启服务，避免连续重复调用。');
+    panel.append(detail);
+   }
    area.querySelector('.answer-comparison').before(panel);
    area.querySelector('[name=score]').value=g.effective_score??'';
    if(g.score_state==='AUTO_SINGLE'){const label=document.createElement('p');label.textContent='日常作业 · 单次自动评分（非双评一致）';panel.prepend(label);}
@@ -439,7 +446,7 @@ async function renderTokenUsage(){
  renderPager('tokenPager','token',tsubs.length);
 }
 action('refreshToken',renderTokenUsage);
-async function refreshHealth(){const h=await api('/api/health');const warning=$('serviceVersionWarning');if(warning){warning.hidden=h.app_build==='20261028-routing-rules-1';warning.textContent=h.app_build?'页面与服务版本不同，请重启服务并刷新页面后使用新功能。':'服务仍为旧版本。请在原服务窗口按 Ctrl+C，再重新启动；新规则和识别路由须重启后生效。';}$('health').textContent=h.llm_configured?'模型已配置':'模型待配置';const r=h.ocr_runtime;$('gpuStatus').textContent=!r.paddle_installed||!r.paddleocr_installed?'当前服务使用的 Python 未装齐 OCR。请关闭服务，用 start-optimization.ps1 重新启动；它会优先选择原有 OCR 环境。':r.active_device?'最近实际识别设备：'+r.active_device:'后端 OCR 包已安装，可选择检查设备，也可以跳过。';$('gpuStatus').textContent+=' 当前服务环境：'+(r.python_executable||'未知')+'；OCR 选项：'+(h.ocr_provider==='paddleocr'?'已启用':'未启用')+'。';if(Object.keys(r.errors).length)$('gpuStatus').textContent+=' 错误：'+Object.values(r.errors).join('；')+'（排除故障后重启服务）';if(r.compatibility_warning)$('gpuStatus').textContent+=' '+r.compatibility_warning;}
+async function refreshHealth(){const h=await api('/api/health');const warning=$('serviceVersionWarning');if(warning){warning.hidden=h.app_build==='20261028-grade-recovery-1';warning.textContent=h.app_build?'页面与服务版本不同，请重启服务并刷新页面后使用新功能。':'服务仍为旧版本。请在原服务窗口按 Ctrl+C，再重新启动；新规则和识别路由须重启后生效。';}$('health').textContent=h.llm_configured?'模型已配置':'模型待配置';const r=h.ocr_runtime;$('gpuStatus').textContent=!r.paddle_installed||!r.paddleocr_installed?'当前服务使用的 Python 未装齐 OCR。请关闭服务，用 start-optimization.ps1 重新启动；它会优先选择原有 OCR 环境。':r.active_device?'最近实际识别设备：'+r.active_device:'后端 OCR 包已安装，可选择检查设备，也可以跳过。';$('gpuStatus').textContent+=' 当前服务环境：'+(r.python_executable||'未知')+'；OCR 选项：'+(h.ocr_provider==='paddleocr'?'已启用':'未启用')+'。';if(Object.keys(r.errors).length)$('gpuStatus').textContent+=' 错误：'+Object.values(r.errors).join('；')+'（排除故障后重启服务）';if(r.compatibility_warning)$('gpuStatus').textContent+=' '+r.compatibility_warning;}
 let modelProviders=[], savedConnection=null, customConnectionDraft={model:'',base_url:''}, displayedProvider='custom';
 function selectedModelConnection(){const id=$('llmProvider').value,p=modelProviders.find(x=>x.id===id);return {provider:id,model:p?$('llmPresetModel').value:$('llmModel').value.trim(),base_url:p?p.base_url:$('llmBaseUrl').value.trim()};}
 function renderModelProvider(keepModel){const id=$('llmProvider').value,p=modelProviders.find(x=>x.id===id),custom=!p;

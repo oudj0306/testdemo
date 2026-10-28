@@ -284,7 +284,7 @@ def health() -> dict[str, Any]:
     from .services.ocr_runtime import runtime_status
     return {
         "status": "ok",
-        "app_build": "20261028-routing-rules-1",
+        "app_build": "20261028-grade-recovery-1",
         "capabilities": ["fixed_answers_v1", "direct_vision_routing", "batch_control"],
         "ocr_provider": settings.ocr_provider,
         "llm_configured": bool(settings.openai_api_key),
