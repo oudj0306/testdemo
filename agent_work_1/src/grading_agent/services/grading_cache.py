@@ -30,7 +30,7 @@ ZERO_USAGE = {"input_tokens": 0, "output_tokens": 0, "cached_tokens": 0}
 
 
 def review_revision(settings: Settings, question_id: str) -> str | None:
-    """Append-only review events invalidate previous automated consensus.
+    """Score corrections invalidate consensus; unchanged confirmations do not.
 
     Read-only mode never creates/changes the main database. An unavailable main
     database disables reuse rather than trusting an unverified old entry.
@@ -39,10 +39,15 @@ def review_revision(settings: Settings, question_id: str) -> str | None:
         return "no-database"
     try:
         with closing(sqlite3.connect(settings.database_path.resolve().as_uri() + "?mode=ro", uri=True, timeout=2)) as db:
+            grade_columns={r[1] for r in db.execute('PRAGMA table_info(grade_items)')}
+            review_columns={r[1] for r in db.execute('PRAGMA table_info(review_events)')}
+            # Older/incomplete databases retain conservative invalidation.
+            predicate=(' AND (g.score IS NULL OR r.final_score != g.score)'
+                       if 'score' in grade_columns and 'final_score' in review_columns else '')
             row = db.execute(
                 """SELECT COUNT(*), MAX(r.created_at), MAX(r.id)
                 FROM review_events r JOIN grade_items g ON g.id=r.grade_item_id
-                WHERE g.question_id=?""", (question_id,),
+                WHERE g.question_id=?"""+predicate, (question_id,),
             ).fetchone()
         return json.dumps(row, separators=(",", ":"))
     except (sqlite3.Error, OSError):

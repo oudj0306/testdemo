@@ -184,10 +184,13 @@ def recognize_answers(layout, pages, questions, settings,on_answer=None):
     by_id = {q['id']:q for q in questions}
     adapter = OCRAdapter(settings.ocr_provider, settings.ocr_device)
     vision_error=None
-    if settings.local_vision_enabled and any(i['method']=='text' and i['question_id'] in by_id for i in layout['items']):
-        from .local_vision import runtime
-        try:diagnostics['visual_runtime']=runtime(settings)
-        except ValueError as exc:vision_error=str(exc)
+    vision_checked=False
+    def direct_api(q):
+        from .local_vision import kind_for
+        return (settings.hybrid_fallback_enabled and settings.llm_extract_answers and bool(settings.openai_api_key)
+                and (kind_for(q) in {'code','flowchart'}
+                     or q.get('rule_config',{}).get('recognition_route')=='api'))
+
     diagnostics['recognitions']={}
     prepared_marks = {}
     for item in layout['items']:
@@ -214,7 +217,19 @@ def recognize_answers(layout, pages, questions, settings,on_answer=None):
                 diagnostics['marks'][qid] = marks
                 source = 'local_layout_omr'
             else:
-                if settings.local_vision_enabled and vision_error:raise ValueError(vision_error)
+                if direct_api(q):
+                    parts=[]
+                    for b in item['regions']:
+                        image=aligned[b['page']]
+                        x1,y1,x2,y2=covered(b,image,metadata[b['page']])
+                        crop=settings.crop_dir/(uuid4().hex+'.png')
+                        Image.fromarray(image[y1:y2,x1:x2]).save(crop)
+                        parts.append({'crop':crop.name,'text':'','consistent':False,
+                                      'issues':['困难题直接使用视觉 API'], 'method':'api_direct'})
+                    diagnostics['recognitions'][qid]={'parts':parts,'question_no':q['question_no'],
+                                                     'route':'api_direct'}
+                    event('recognition_route',details={'route':'api_direct','question_id':qid})
+                    raise ValueError('困难题已路由视觉 API，跳过本地模型等待')
                 texts, scores, blanks = [], [], []
                 parts=[]
                 joint_crops=[]
@@ -232,6 +247,26 @@ def recognize_answers(layout, pages, questions, settings,on_answer=None):
                     if joint:
                         joint_crops.append(crop);joint_references.append(reference);continue
                     if settings.local_vision_enabled:
+                        # Unambiguous numeric text can bypass the resident VLM.
+                        # This is syntax gating, never correction towards the answer key.
+                        if q.get('scoring_mode')=='numeric' and kind_for(q)=='text':
+                            import re
+                            try:
+                                with timed('local_layout_ocr'):t,c,_=adapter.extract(crop)
+                                if (c is not None and math.isfinite(float(c)) and .98<=float(c)<=1
+                                        and re.fullmatch(r'[+-]?(?:\d+(?:\.\d+)?|\.\d+)(?:%|/[+-]?\d+(?:\.\d+)?)?',t.strip())):
+                                    parts.append({'crop':crop.name,'text':t,'confidence':c,'consistent':True,
+                                                  'issues':[],'method':'ocr','model':{'model':'PP-OCRv5'}})
+                                    diagnostics['recognitions'][qid]={'parts':parts,'question_no':q['question_no']}
+                                    texts.append(t);scores.append(float(c));blanks.append(False)
+                                    continue
+                            except (ValueError,OSError):pass
+                        if not vision_checked:
+                            from .local_vision import runtime
+                            vision_checked=True
+                            try:diagnostics['visual_runtime']=runtime(settings)
+                            except ValueError as exc:vision_error=str(exc)
+                        if vision_error:raise ValueError(vision_error)
                         from .local_vision import transcribe
                         part={'crop':crop.name,'text':'','consistent':False,'issues':[],
                               'model':{'model':settings.local_vision_model}}
@@ -267,6 +302,12 @@ def recognize_answers(layout, pages, questions, settings,on_answer=None):
                     scores.append(float(c))
                     blanks.append(False)
                 if joint:
+                    if not vision_checked:
+                        from .local_vision import runtime
+                        vision_checked=True
+                        try:diagnostics['visual_runtime']=runtime(settings)
+                        except ValueError as exc:vision_error=str(exc)
+                    if vision_error:raise ValueError(vision_error)
                     from .local_vision import transcribe
                     part={'crop':joint_crops[0].name,'crops':[p.name for p in joint_crops],
                           'text':'','consistent':False,'issues':[],'model':{'model':settings.local_vision_model}}
@@ -285,6 +326,8 @@ def recognize_answers(layout, pages, questions, settings,on_answer=None):
                     if issues:raise ValueError('；'.join(dict.fromkeys(issues)))
                     blank=bool(blanks) and all(blanks)
                     text,confidence,source=('' if blank else '\n'.join('[未作答]' if empty else t for t,empty in zip(texts,blanks))),None,('local_layout_blank' if blank else 'local_vlm_consistent')
+                    if not blank and parts and all(p.get('method')=='ocr' for p in parts):
+                        source='local_layout_ocr';confidence=min(scores)
                 else:
                     issues=[issue for part in parts for issue in part['issues']]
                     if issues:raise ValueError('；'.join(dict.fromkeys(issues)))

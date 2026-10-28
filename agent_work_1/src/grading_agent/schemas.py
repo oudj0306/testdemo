@@ -67,6 +67,9 @@ class QuestionCreate(BaseModel):
 
     @model_validator(mode='after')
     def valid_region(self):
+        if self.rule_config.get('fixed_answers') is not None:
+            from .services.fixed_answers import validate_fixed_answers
+            validate_fixed_answers(self.rule_config['fixed_answers'],self.max_score)
         if self.rule_config.get('region'):
             self.rule_config['region'] = RegionInput.model_validate(self.rule_config['region']).model_dump(exclude_none=True)
         return self

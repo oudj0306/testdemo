@@ -13,7 +13,7 @@ from ..model_catalog import apply_provider_options
 from ..repository import record_token_usage
 from .telemetry import event, request_json
 
-VERSION = 'daily-bulk-v1'
+VERSION = 'daily-bulk-v2-concise'
 
 
 def _request(question, items, settings):

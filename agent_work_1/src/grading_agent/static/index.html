@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="theme-color" content="#253d66"><title>阅知 · 阅卷工作台</title>
-  <link rel="stylesheet" href="/static/style.css?v=20261026-review-split-1">
+  <link rel="stylesheet" href="/static/style.css?v=20261028-routing-rules-1">
 </head>
 <body>
 <a class="skip-link" href="#mainContent">跳到工作区</a>
@@ -24,6 +24,7 @@
   <div class="sidebar-note"><span class="status-dot"></span> 保留每一次判断<p>固定标准 · 独立复核 · 可追溯</p></div>
 </aside>
 <main id="mainContent">
+  <p id="serviceVersionWarning" class="helper-note" role="alert" hidden></p>
   <header class="page-header"><div><p class="eyebrow" id="pageEyebrow">ASSESSMENT LIBRARY</p><h1 id="heading">试卷与答案</h1><p id="pageDescription" class="page-description">把标准准备好，让每一份答卷有据可依。</p></div><span id="health" class="badge neutral">连接中</span></header>
   <div class="context-bar">
     <label class="assessment-picker"><span>当前试卷</span><select id="assessment" aria-label="当前试卷"></select></label>
@@ -97,5 +98,5 @@
 </dialog>
 <dialog id="layoutPreviewDialog" class="optimization-dialog"><div class="toolbar"><h2 id="layoutPreviewTitle">自动模板 · 位置核对</h2><button id="closeLayoutPreview" class="secondary">关闭</button></div><p id="layoutPreviewHint">蓝框：文字作答区域；绿框：选择题填涂区域及选项。首次请核对题号与实际位置，错误的文字区域可用框选纠正。</p><div class="toolbar"><label>模板页码<input id="layoutPreviewPage" type="number" min="1" value="1"></label><button id="loadLayoutPreview">查看该页</button></div><p id="layoutPreviewStatus" role="status"></p><img id="layoutPreviewImage" alt="自动模板区域标注预览" style="width:100%"></dialog>
 <dialog id="trainingDialog" class="optimization-dialog"><h2>批准训练样本</h2><p>请删除姓名和联系方式等身份信息。批准脱敏文本不代表确认机器评分；必须先保存人工复核，才能导出教师确认标签。</p><label>脱敏作答<textarea id="trainingText" rows="8"></textarea></label><label>批准人<input id="trainingApprover" maxlength="100"></label><label class="inline"><input id="trainingConsent" type="checkbox">我已检查脱敏文本，并批准用于训练数据导出</label><div class="toolbar"><button id="approveTraining">批准</button><button id="closeTraining" class="secondary">取消</button></div></dialog>
-<script src="/static/chart.umd.min.js"></script><script src="/static/review-evidence.js?v=20261026-review-split-1"></script><script src="/static/app.js?v=20261026-review-split-1"></script>
+<script src="/static/chart.umd.min.js"></script><script src="/static/review-evidence.js?v=20261028-routing-rules-1"></script><script src="/static/app.js?v=20261028-routing-rules-1"></script>
 </body></html>

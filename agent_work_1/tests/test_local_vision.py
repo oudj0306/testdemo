@@ -160,6 +160,8 @@ def test_invalid_graph_or_truncation_rejected(local_model,monkeypatch):
 def enable_visual(monkeypatch):
     monkeypatch.setattr(config,'_settings_cache',replace(config.get_settings(),local_vision_enabled=True))
     monkeypatch.setattr(vision,'runtime',lambda *a:{'ready':True,'model':'synthetic-local','digest':'test'})
+    # These tests exercise the VLM path, after the numeric OCR fast path declines.
+    monkeypatch.setattr('grading_agent.services.ingestion.OCRAdapter.extract',lambda *a:('',None,'synthetic_ocr'))
 
 
 def test_integration_accepted_without_fake_confidence_and_rules_still_score(workspace,monkeypatch):

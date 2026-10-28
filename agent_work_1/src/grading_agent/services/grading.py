@@ -24,6 +24,8 @@ RULE_MODES = {"exact_text", "choice_set", "numeric", "symbolic"}
 
 
 def grading_question(question):
+    if question.get('rule_config',{}).get('fixed_answers'):
+        return {**question,'prompt':question['prompt']+'\n教师配置的逐空答案与分值（按空序，接受所列同义答案）：'+json.dumps(question['rule_config']['fixed_answers'],ensure_ascii=False)}
     if question['scoring_mode'] not in RULE_MODES:return question
     constraints={k:v for k,v in question.get('rule_config',{}).items() if k in {'tolerance','required_form','strict_exact_match','allow_semantic_grading'}}
     if not constraints:return question
@@ -64,6 +66,9 @@ def rule_needs_model(question,response,decision):
 
 def requires_model(question,response,settings=None):
     if not reliable_text(response) or question['scoring_mode']=='manual':return False
+    from .fixed_answers import grade_fixed_answers
+    if grade_fixed_answers(question,response) is not None:return False
+    if question.get('rule_config',{}).get('fixed_answers'):return True
     if question['scoring_mode'] not in RULE_MODES:return True
     if settings is None:
         from ..config import get_settings
@@ -74,11 +79,20 @@ def requires_model(question,response,settings=None):
 
 def _grade_question(question, response, settings, submission_id, prepared=None):
     checkpoint()
+    from .fixed_answers import grade_fixed_answers
+    fixed=grade_fixed_answers(question,response)
     # Independent questions may run together; a question's stability passes
     # remain sequential and use the original stopping/review rules.
     if response and response.get('blank_confirmed') and not str(response.get('raw_text') or '').strip():
         decision=GradeDecision(0.0,float(question['max_score']),ScoreState.REPRODUCIBLE_EXACT,False,['confirmed_blank'])
         event('rule_grade')
+    elif fixed is not None:
+        decision=fixed
+        event('rule_grade',details={'kind':'fixed_answers'})
+    elif (question.get('rule_config',{}).get('fixed_answers') and reliable_text(response)
+          and question['scoring_mode']!='manual'):
+        decision=prepared if prepared is not None else OpenAIGrader(settings).grade(grading_question(question),response['raw_text'])
+        decision.reason_codes=list(dict.fromkeys([*decision.reason_codes,'rule_fallback_to_model']))
     elif question["scoring_mode"] in RULE_MODES:
         routed_question = {**question, 'rule_config': {**question.get('rule_config', {}), 'minimum_ocr_confidence': confidence_threshold(question, settings)}}
         decision = grade_with_rules(routed_question, response)
@@ -108,7 +122,7 @@ def _grade_question(question, response, settings, submission_id, prepared=None):
     ):
         decision = GradeDecision(None, float(question['max_score']), ScoreState.BLOCKED, True, ['extraction_uncertain'])
     else:
-        decision = prepared if prepared is not None else OpenAIGrader(settings).grade(question, str(response["raw_text"]))
+        decision = prepared if prepared is not None else OpenAIGrader(settings).grade(grading_question(question), str(response["raw_text"]))
     return apply_review_policy(decision, question, response, settings, submission_id)
 
 
