@@ -3,6 +3,7 @@
 The application runs with one server process (as required by the durable queue).
 Reference counting keeps the lock registry bounded by in-flight work.
 """
+
 from contextlib import contextmanager
 from threading import Lock, RLock
 
@@ -24,7 +25,7 @@ def submission_work(database_path, submission_id, *, blocking=True):
     try:
         acquired = entry[0].acquire(blocking=blocking)
         if not acquired:
-            raise SubmissionBusyError('这份答卷正在识别或批改，请等待当前任务完成')
+            raise SubmissionBusyError("这份答卷正在识别或批改，请等待当前任务完成")
         yield
     finally:
         if acquired:

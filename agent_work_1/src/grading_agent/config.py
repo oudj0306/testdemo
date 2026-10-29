@@ -6,7 +6,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 DEFAULT_OPENAI_MODEL = "gpt-6-luna"
@@ -34,8 +33,8 @@ class Settings:
     review_confidence_threshold: float = 0.85
     grading_profile: str = "legacy"
     local_vision_enabled: bool = False
-    local_vision_url: str = 'http://127.0.0.1:11435'
-    local_vision_model: str = 'qwen3-vl:4b-instruct'
+    local_vision_url: str = "http://127.0.0.1:11435"
+    local_vision_model: str = "qwen3-vl:4b-instruct"
     local_vision_verify: bool = True
     hybrid_fallback_enabled: bool = True
 
@@ -80,8 +79,13 @@ def get_settings() -> Settings:
         return _settings_cache
     data_dir = _data_dir()
     overrides = _read_overrides()
-    from .services.runtime_paths import inherited_ocr_defaults
-    inherited = inherited_ocr_defaults(PROJECT_ROOT) if data_dir == (PROJECT_ROOT / 'data').resolve() else {}
+    from grading_agent.services.runtime_paths import inherited_ocr_defaults
+
+    inherited = (
+        inherited_ocr_defaults(PROJECT_ROOT)
+        if data_dir == (PROJECT_ROOT / "data").resolve()
+        else {}
+    )
     if "openai_api_key" in overrides:
         openai_api_key = overrides["openai_api_key"] or None
     else:
@@ -93,23 +97,53 @@ def get_settings() -> Settings:
         page_dir=data_dir / "pages",
         crop_dir=data_dir / "crops",
         openai_api_key=openai_api_key,
-        openai_model=str(overrides.get("openai_model") or os.getenv("OPENAI_MODEL") or DEFAULT_OPENAI_MODEL),
-        openai_base_url=str(overrides.get("openai_base_url") or os.getenv("OPENAI_BASE_URL") or DEFAULT_OPENAI_BASE_URL).rstrip("/"),
-        llm_grading_passes=_clamp_passes(overrides.get("llm_grading_passes", os.getenv("LLM_GRADING_PASSES", "1"))),
-        llm_extract_answers=_as_bool(overrides.get("llm_extract_answers", os.getenv("LLM_EXTRACT_ANSWERS", "true"))),
-        enable_thinking=_as_bool(overrides.get("enable_thinking", os.getenv("LLM_ENABLE_THINKING", "false"))),
-        ocr_provider=str(overrides.get("ocr_provider", os.getenv("OCR_PROVIDER", inherited.get('ocr_provider', 'none')))).lower(),
-        ocr_device=str(overrides.get("ocr_device", os.getenv("OCR_DEVICE", inherited.get('ocr_device', 'auto')))),
-        local_ocr_first=_as_bool(overrides.get("local_ocr_first", inherited.get('local_ocr_first', False))),
+        openai_model=str(
+            overrides.get("openai_model") or os.getenv("OPENAI_MODEL") or DEFAULT_OPENAI_MODEL
+        ),
+        openai_base_url=str(
+            overrides.get("openai_base_url")
+            or os.getenv("OPENAI_BASE_URL")
+            or DEFAULT_OPENAI_BASE_URL
+        ).rstrip("/"),
+        llm_grading_passes=_clamp_passes(
+            overrides.get("llm_grading_passes", os.getenv("LLM_GRADING_PASSES", "1"))
+        ),
+        llm_extract_answers=_as_bool(
+            overrides.get("llm_extract_answers", os.getenv("LLM_EXTRACT_ANSWERS", "true"))
+        ),
+        enable_thinking=_as_bool(
+            overrides.get("enable_thinking", os.getenv("LLM_ENABLE_THINKING", "false"))
+        ),
+        ocr_provider=str(
+            overrides.get(
+                "ocr_provider", os.getenv("OCR_PROVIDER", inherited.get("ocr_provider", "none"))
+            )
+        ).lower(),
+        ocr_device=str(
+            overrides.get(
+                "ocr_device", os.getenv("OCR_DEVICE", inherited.get("ocr_device", "auto"))
+            )
+        ),
+        local_ocr_first=_as_bool(
+            overrides.get("local_ocr_first", inherited.get("local_ocr_first", False))
+        ),
         review_mode=str(overrides.get("review_mode", "selective")),
-        review_sample_rate=max(0.0, min(1.0, float(overrides.get("review_sample_rate", os.getenv('REVIEW_SAMPLE_RATE', '0.05'))))),
-        review_confidence_threshold=float(overrides.get('review_confidence_threshold', 0.85)),
-        grading_profile=str(overrides.get('grading_profile', 'legacy')),
-        local_vision_enabled=_as_bool(overrides.get('local_vision_enabled', False)),
-        local_vision_url=str(overrides.get('local_vision_url', 'http://127.0.0.1:11435')),
-        local_vision_model=str(overrides.get('local_vision_model', 'qwen3-vl:4b-instruct')),
-        local_vision_verify=_as_bool(overrides.get('local_vision_verify', True)),
-        hybrid_fallback_enabled=_as_bool(overrides.get('hybrid_fallback_enabled',os.getenv('HYBRID_FALLBACK_ENABLED','true'))),
+        review_sample_rate=max(
+            0.0,
+            min(
+                1.0,
+                float(overrides.get("review_sample_rate", os.getenv("REVIEW_SAMPLE_RATE", "0.05"))),
+            ),
+        ),
+        review_confidence_threshold=float(overrides.get("review_confidence_threshold", 0.85)),
+        grading_profile=str(overrides.get("grading_profile", "legacy")),
+        local_vision_enabled=_as_bool(overrides.get("local_vision_enabled", False)),
+        local_vision_url=str(overrides.get("local_vision_url", "http://127.0.0.1:11435")),
+        local_vision_model=str(overrides.get("local_vision_model", "qwen3-vl:4b-instruct")),
+        local_vision_verify=_as_bool(overrides.get("local_vision_verify", True)),
+        hybrid_fallback_enabled=_as_bool(
+            overrides.get("hybrid_fallback_enabled", os.getenv("HYBRID_FALLBACK_ENABLED", "true"))
+        ),
     )
     for directory in (settings.data_dir, settings.upload_dir, settings.page_dir, settings.crop_dir):
         directory.mkdir(parents=True, exist_ok=True)
@@ -119,10 +153,14 @@ def get_settings() -> Settings:
 
 def update_local_vision(enabled, model, verify=True):
     global _settings_cache
-    overrides=_read_overrides()
-    overrides.update(local_vision_enabled=enabled,local_vision_model=model,local_vision_verify=verify)
-    _settings_file().write_text(json.dumps(overrides,ensure_ascii=False,indent=2),encoding='utf-8')
-    _settings_cache=None
+    overrides = _read_overrides()
+    overrides.update(
+        local_vision_enabled=enabled, local_vision_model=model, local_vision_verify=verify
+    )
+    _settings_file().write_text(
+        json.dumps(overrides, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    _settings_cache = None
     return get_settings()
 
 
@@ -152,13 +190,21 @@ def update_llm_settings(
     overrides["llm_grading_passes"] = str(_clamp_passes(llm_grading_passes))
     overrides["llm_extract_answers"] = "true" if llm_extract_answers else "false"
     overrides["enable_thinking"] = "true" if enable_thinking else "false"
-    for name, value in (("ocr_provider", ocr_provider), ("ocr_device", ocr_device),
-                        ("local_ocr_first", local_ocr_first), ("review_mode", review_mode),
-                        ("review_sample_rate", review_sample_rate), ('review_confidence_threshold', review_confidence_threshold),
-                        ('grading_profile', grading_profile),('hybrid_fallback_enabled',hybrid_fallback_enabled)):
+    for name, value in (
+        ("ocr_provider", ocr_provider),
+        ("ocr_device", ocr_device),
+        ("local_ocr_first", local_ocr_first),
+        ("review_mode", review_mode),
+        ("review_sample_rate", review_sample_rate),
+        ("review_confidence_threshold", review_confidence_threshold),
+        ("grading_profile", grading_profile),
+        ("hybrid_fallback_enabled", hybrid_fallback_enabled),
+    ):
         if value is not None:
             overrides[name] = value
     data_dir.mkdir(parents=True, exist_ok=True)
-    _settings_file().write_text(json.dumps(overrides, ensure_ascii=False, indent=2), encoding="utf-8")
+    _settings_file().write_text(
+        json.dumps(overrides, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
     _settings_cache = None
     return get_settings()

@@ -1,6 +1,6 @@
 from grading_agent.schemas import ScoreState
-from grading_agent.services.math_grader import grade_with_rules
-from grading_agent.services.question_classifier import infer_question_route
+from grading_agent.services.scoring.question_classifier import infer_question_route
+from grading_agent.services.scoring.rule_grader import grade_with_rules
 
 
 def question(mode: str, key: object, **rules: object) -> dict[str, object]:
@@ -28,7 +28,9 @@ def test_low_ocr_confidence_is_not_scored() -> None:
 
 
 def test_unconfirmed_blank_requires_review() -> None:
-    decision = grade_with_rules(question("exact_text", "B"), {"raw_text": "", "blank_confirmed": False})
+    decision = grade_with_rules(
+        question("exact_text", "B"), {"raw_text": "", "blank_confirmed": False}
+    )
     assert decision.score is None
     assert decision.needs_review
     assert "blank_not_confirmed" in decision.reason_codes

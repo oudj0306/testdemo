@@ -6,10 +6,11 @@ import pytest
 
 
 def test_overview_includes_missing_questions_candidates_and_manual_blank_without_xss():
-    node=shutil.which('node')
-    if not node:pytest.skip('Node unavailable')
-    source=Path(__file__).resolve().parents[1]/'src/grading_agent/static/app.js'
-    script=r'''
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("Node unavailable")
+    source = Path(__file__).resolve().parents[1] / "src/grading_agent/static/app.js"
+    script = r"""
 const fs=require('fs'),vm=require('vm'),assert=require('assert');
 const code=fs.readFileSync(process.argv[1],'utf8');
 const env={esc:v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))};
@@ -55,15 +56,22 @@ env.batchControlsSupport=false;const unavailable=env.batchControlsHtml({id:'b',s
 env.batchControlsSupport=true;env.pendingBatchControls.add('b');assert(env.batchControlsHtml({id:'b',status:'processing'}).includes('disabled'));
 
 
-'''
-    subprocess.run([node,'-e',script,str(source)],check=True,capture_output=True,text=True,encoding='utf-8')
+"""
+    subprocess.run(
+        [node, "-e", script, str(source)],
+        check=True,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
 
 
 def test_control_handler_is_delegated_immediate_and_blocks_duplicate_requests():
-    node=shutil.which('node')
-    if not node:pytest.skip('Node unavailable')
-    source=Path(__file__).resolve().parents[1]/'src/grading_agent/static/app.js'
-    script=r'''
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("Node unavailable")
+    source = Path(__file__).resolve().parents[1] / "src/grading_agent/static/app.js"
+    script = r"""
 const fs=require('fs'),vm=require('vm'),assert=require('assert');
 const code=fs.readFileSync(process.argv[1],'utf8');
 let finish,requests=0,refreshes=0,handler;
@@ -86,5 +94,11 @@ assert.equal(typeof handler,'function');
  vm.runInContext(code.slice(code.indexOf('async function ensureBatchControls('),code.indexOf('async function handleBatchControlClick(')),env);
  await env.ensureBatchControls();assert.equal(env.batchControlsSupport,false);
 })().catch(e=>{console.error(e);process.exitCode=1;});
-'''
-    subprocess.run([node,'-e',script,str(source)],check=True,capture_output=True,text=True,encoding='utf-8')
+"""
+    subprocess.run(
+        [node, "-e", script, str(source)],
+        check=True,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )

@@ -3,9 +3,9 @@ from __future__ import annotations
 import io
 import time
 
+from docx import Document
 from fastapi.testclient import TestClient
 from PIL import Image
-from docx import Document
 
 
 def png_bytes() -> bytes:
@@ -31,7 +31,9 @@ def test_complete_rule_grading_flow(monkeypatch, tmp_path) -> None:
     from grading_agent.app import app
 
     with TestClient(app) as client:
-        assessment = client.post("/api/assessments", json={"title": "单元测试", "subject_codes": ["math"]}).json()
+        assessment = client.post(
+            "/api/assessments", json={"title": "单元测试", "subject_codes": ["math"]}
+        ).json()
         question = client.post(
             f"/api/assessments/{assessment['id']}/questions",
             json={
@@ -132,12 +134,15 @@ def test_batch_upload_and_reference_document_dedup(monkeypatch, tmp_path) -> Non
         assert batch.status_code == 202, batch.text
         result = batch.json()
         deadline = time.monotonic() + 10
-        while result['status'] == 'processing' and time.monotonic() < deadline:
+        while result["status"] == "processing" and time.monotonic() < deadline:
             time.sleep(0.05)
-            result = client.get('/api/batches/' + result['id']).json()
+            result = client.get("/api/batches/" + result["id"]).json()
         assert result["success_count"] == 2, result
         assert len(result["items"]) == 2
-        assert client.get('/api/batches', params={'assessment_id': assessment['id']}).json()[0]['id'] == result['id']
+        assert (
+            client.get("/api/batches", params={"assessment_id": assessment["id"]}).json()[0]["id"]
+            == result["id"]
+        )
 
 
 def test_docx_question_paper_is_extracted(monkeypatch, tmp_path) -> None:
@@ -145,7 +150,9 @@ def test_docx_question_paper_is_extracted(monkeypatch, tmp_path) -> None:
     from grading_agent.app import app
 
     with TestClient(app) as client:
-        assessment = client.post("/api/assessments", json={"title": "Word试卷", "subject_codes": ["math"]}).json()
+        assessment = client.post(
+            "/api/assessments", json={"title": "Word试卷", "subject_codes": ["math"]}
+        ).json()
         uploaded = client.post(
             f"/api/assessments/{assessment['id']}/documents",
             data={"kind": "question_paper"},
@@ -170,12 +177,18 @@ def test_candidate_answer_never_auto_finalizes(monkeypatch, tmp_path) -> None:
     from grading_agent.app import app
 
     with TestClient(app) as client:
-        assessment = client.post("/api/assessments", json={"title": "候选答案试卷", "subject_codes": ["math"]}).json()
+        assessment = client.post(
+            "/api/assessments", json={"title": "候选答案试卷", "subject_codes": ["math"]}
+        ).json()
         question = client.post(
             f"/api/assessments/{assessment['id']}/questions",
             json={
-                "question_no": "1", "prompt": "1+1=?", "question_type": "numeric",
-                "scoring_mode": "numeric", "max_score": 5, "answer_key": "2",
+                "question_no": "1",
+                "prompt": "1+1=?",
+                "question_type": "numeric",
+                "scoring_mode": "numeric",
+                "max_score": 5,
+                "answer_key": "2",
                 "answer_key_state": "candidate",
             },
         )

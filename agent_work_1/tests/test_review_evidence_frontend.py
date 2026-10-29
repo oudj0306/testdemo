@@ -6,10 +6,11 @@ import pytest
 
 
 def test_review_viewer_switching_zoom_and_stale_requests_do_not_touch_edits():
-    node=shutil.which('node')
-    if not node:pytest.skip('Node unavailable')
-    source=Path(__file__).resolve().parents[1]/'src/grading_agent/static/review-evidence.js'
-    script=r'''
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("Node unavailable")
+    source = Path(__file__).resolve().parents[1] / "src/grading_agent/static/review-evidence.js"
+    script = r"""
 const fs=require('fs'),vm=require('vm'),assert=require('assert');
 class Element{
  constructor(){this.innerHTML='';this.textContent='';this.attrs={};this.disabled=false;this.listeners={};this.dataset={};this.clientWidth=500;this.clientHeight=400;this.scrollLeft=0;this.scrollTop=0;this.isConnected=true;this.style={};this.classList={toggle(){},add(){},remove(){}};}
@@ -56,6 +57,8 @@ const manifest=id=>({question_id:id,question_no:id,default_page:1,default_mode:'
  assert(!viewport.innerHTML.includes('/page-four'));
  assert(requests.every(r=>r.url.includes('/review-visual?question_id=')&&!r.options.method));
 })().catch(e=>{console.error(e);process.exitCode=1;});
-'''
-    result=subprocess.run([node,'-e',script,str(source)],capture_output=True,text=True,encoding='utf-8')
-    assert result.returncode==0,result.stderr
+"""
+    result = subprocess.run(
+        [node, "-e", script, str(source)], capture_output=True, text=True, encoding="utf-8"
+    )
+    assert result.returncode == 0, result.stderr

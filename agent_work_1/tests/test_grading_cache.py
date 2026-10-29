@@ -1,33 +1,44 @@
-from concurrent.futures import ThreadPoolExecutor
-from dataclasses import replace
 import json
 import sqlite3
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
 
 import pytest
 
 from grading_agent.config import get_settings
 from grading_agent.schemas import ScoreState
-from grading_agent.services import llm_grader
-from grading_agent.services.grading_cache import StableGradeCache
-from grading_agent.services.llm_grader import GradingResponseError, LLMResult, OpenAIGrader
-from grading_agent.services.review_policy import apply_review_policy
+from grading_agent.services.scoring import llm_grader
+from grading_agent.services.scoring.grading_cache import StableGradeCache
+from grading_agent.services.scoring.llm_grader import GradingResponseError, LLMResult, OpenAIGrader
+from grading_agent.services.scoring.review_policy import apply_review_policy
 
 
 def question():
     return {
-        "id": "q1", "assessment_id": "a1", "question_no": "1",
-        "prompt": "解释计算过程", "max_score": 10, "question_type": "short_answer",
-        "scoring_mode": "rubric_assisted", "answer_key": "学生证据",
-        "answer_key_state": "verified", "rule_config": {},
+        "id": "q1",
+        "assessment_id": "a1",
+        "question_no": "1",
+        "prompt": "解释计算过程",
+        "max_score": 10,
+        "question_type": "short_answer",
+        "scoring_mode": "rubric_assisted",
+        "answer_key": "学生证据",
+        "answer_key_state": "verified",
+        "rule_config": {},
         "rubric": [{"criterion": "过程正确", "score": 10}],
     }
 
 
 def settings(**kwargs):
-    return replace(get_settings(), openai_api_key="test", review_mode="selective", llm_grading_passes=3,
-                   **kwargs)
+    return replace(
+        get_settings(),
+        openai_api_key="test",
+        review_mode="selective",
+        llm_grading_passes=3,
+        **kwargs,
+    )
 
 
 def mock_consensus(monkeypatch, *, score=8, evidence="学生证据", review=False):
@@ -35,7 +46,9 @@ def mock_consensus(monkeypatch, *, score=8, evidence="学生证据", review=Fals
 
     def single(self, q, answer):
         calls.append((q, answer))
-        return LLMResult(score, ["rubric_assisted"], [evidence] if evidence else [], review, 100, 20, 10)
+        return LLMResult(
+            score, ["rubric_assisted"], [evidence] if evidence else [], review, 100, 20, 10
+        )
 
     monkeypatch.setattr(OpenAIGrader, "_single_pass", single)
     return calls
@@ -55,17 +68,28 @@ def test_persistent_exact_consensus_hit_is_auditable_and_free(monkeypatch):
     assert not reused.needs_review
     assert reused.score_state == ScoreState.CONSENSUS_CANDIDATE
     assert "学生证据" in reused.evidence
-    assert any(e.startswith("stable_grade_cache_hit=") and "independent_passes=2" in e for e in reused.evidence)
+    assert any(
+        e.startswith("stable_grade_cache_hit=") and "independent_passes=2" in e
+        for e in reused.evidence
+    )
     assert any(e.startswith("cache_source_api_input_tokens=200") for e in reused.evidence)
     assert not any(e.startswith("api_input_tokens=") for e in reused.evidence)
 
 
-@pytest.mark.parametrize("field,value", [
-    ("assessment_id", "a2"), ("id", "q2"), ("prompt", "另一题"),
-    ("answer_key", "另一答案"), ("max_score", 11), ("question_type", "essay"),
-    ("scoring_mode", "manual"), ("rubric", [{"criterion": "另一评分点", "score": 10}]),
-    ("rule_config", {"alternative": True}),
-])
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("assessment_id", "a2"),
+        ("id", "q2"),
+        ("prompt", "另一题"),
+        ("answer_key", "另一答案"),
+        ("max_score", 11),
+        ("question_type", "essay"),
+        ("scoring_mode", "manual"),
+        ("rubric", [{"criterion": "另一评分点", "score": 10}]),
+        ("rule_config", {"alternative": True}),
+    ],
+)
 def test_question_changes_invalidate(monkeypatch, field, value):
     calls = mock_consensus(monkeypatch)
     grader = OpenAIGrader(settings())
@@ -74,11 +98,16 @@ def test_question_changes_invalidate(monkeypatch, field, value):
     assert len(calls) == 4
 
 
-@pytest.mark.parametrize("field,value,expected", [
-    ("openai_model", "other-model", 4), ("openai_base_url", "https://different.invalid/v1", 4),
-    ("enable_thinking", True, 4), ("llm_grading_passes", 2, 4),
-    ("review_mode", "strict", 5),
-])
+@pytest.mark.parametrize(
+    "field,value,expected",
+    [
+        ("openai_model", "other-model", 4),
+        ("openai_base_url", "https://different.invalid/v1", 4),
+        ("enable_thinking", True, 4),
+        ("llm_grading_passes", 2, 4),
+        ("review_mode", "strict", 5),
+    ],
+)
 def test_model_and_policy_changes_invalidate(monkeypatch, field, value, expected):
     calls = mock_consensus(monkeypatch)
     config = replace(settings(), enable_thinking=False)
@@ -106,7 +135,9 @@ def test_answers_are_never_stripped_or_semantically_matched(monkeypatch, answer)
     assert len(calls) == 4
 
 
-@pytest.mark.parametrize("review,evidence", [(True, "学生证据"), (False, ""), (False, "伪造的证据")])
+@pytest.mark.parametrize(
+    "review,evidence", [(True, "学生证据"), (False, ""), (False, "伪造的证据")]
+)
 def test_review_missing_or_ungrounded_evidence_never_cached(monkeypatch, review, evidence):
     calls = mock_consensus(monkeypatch, review=review, evidence=evidence)
     grader = OpenAIGrader(settings())
@@ -159,7 +190,9 @@ def test_failed_pass_keeps_successful_usage_and_is_not_cached(monkeypatch):
     def single(*args):
         calls.append(1)
         if len(calls) % 2 == 0:
-            raise GradingResponseError("bad JSON", {"input_tokens": 40, "output_tokens": 6, "cached_tokens": 2})
+            raise GradingResponseError(
+                "bad JSON", {"input_tokens": 40, "output_tokens": 6, "cached_tokens": 2}
+            )
         return LLMResult(8, [], ["学生证据"], False, 100, 20, 10)
 
     monkeypatch.setattr(OpenAIGrader, "_single_pass", single)
@@ -183,12 +216,23 @@ def test_out_of_range_response_still_counts_billed_usage(monkeypatch):
 
 def test_malformed_real_response_retains_known_usage(monkeypatch):
     class Response:
-        def __enter__(self): return self
-        def __exit__(self, *args): pass
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
         def read(self):
-            return json.dumps({"output_text": "invalid JSON", "usage": {
-                "input_tokens": 90, "output_tokens": 7, "input_tokens_details": {"cached_tokens": 30},
-            }}).encode()
+            return json.dumps(
+                {
+                    "output_text": "invalid JSON",
+                    "usage": {
+                        "input_tokens": 90,
+                        "output_tokens": 7,
+                        "input_tokens_details": {"cached_tokens": 30},
+                    },
+                }
+            ).encode()
 
     monkeypatch.setattr(llm_grader.urllib.request, "urlopen", lambda *a, **kw: Response())
     decision = OpenAIGrader(settings()).grade(question(), "学生证据")
@@ -264,8 +308,8 @@ def test_review_race_during_cache_read_bypasses_stale_hit(monkeypatch):
     calls = mock_consensus(monkeypatch)
     config = settings()
     grader = OpenAIGrader(config)
-    revisions = iter(['same', 'same', 'same', 'same', 'same', 'changed', 'changed'])
-    monkeypatch.setattr(llm_grader, 'review_revision', lambda *a: next(revisions, 'changed'))
+    revisions = iter(["same", "same", "same", "same", "same", "changed", "changed"])
+    monkeypatch.setattr(llm_grader, "review_revision", lambda *a: next(revisions, "changed"))
     grader.grade(question(), "学生证据")
     grader.grade(question(), "学生证据")
     # The cached result was read but not returned after the revision changed;
@@ -290,7 +334,8 @@ def test_cache_hit_still_obeys_per_submission_review_policy(monkeypatch):
 def test_single_pass_cannot_be_inserted_into_cache():
     config = settings()
     cache = StableGradeCache(config.data_dir)
-    from grading_agent.services.math_grader import GradeDecision
+    from grading_agent.services.scoring.decisions import GradeDecision
+
     decision = GradeDecision(8, 10, ScoreState.CONSENSUS_CANDIDATE, False, [], ["学生证据"])
     cache.put("single", decision, 1)
     assert cache.get("single", 10) is None

@@ -7,8 +7,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Iterator
 
-from .config import get_settings
-
+from grading_agent.config import get_settings
 
 SCHEMA = """
 PRAGMA foreign_keys = ON;
@@ -238,6 +237,7 @@ def connect(path: Path | None = None) -> sqlite3.Connection:
 @contextmanager
 def transaction(path: Path | None = None) -> Iterator[sqlite3.Connection]:
     from time import perf_counter
+
     started = perf_counter()
     connection = connect(path)
     try:
@@ -248,22 +248,31 @@ def transaction(path: Path | None = None) -> Iterator[sqlite3.Connection]:
         raise
     finally:
         connection.close()
-        from .services.telemetry import database_elapsed
+        from grading_agent.services.telemetry import database_elapsed
+
         database_elapsed((perf_counter() - started) * 1000)
 
 
 def initialize_database(path: Path | None = None) -> None:
     with transaction(path) as connection:
         connection.executescript(SCHEMA)
-        question_columns = {row["name"] for row in connection.execute("PRAGMA table_info(questions)").fetchall()}
+        question_columns = {
+            row["name"] for row in connection.execute("PRAGMA table_info(questions)").fetchall()
+        }
         if "answer_key_state" not in question_columns:
-            connection.execute("ALTER TABLE questions ADD COLUMN answer_key_state TEXT NOT NULL DEFAULT 'verified'")
-        grade_columns = {row['name'] for row in connection.execute('PRAGMA table_info(grade_items)')}
-        if 'snapshot' not in grade_columns:
+            connection.execute(
+                "ALTER TABLE questions ADD COLUMN answer_key_state TEXT NOT NULL DEFAULT 'verified'"
+            )
+        grade_columns = {
+            row["name"] for row in connection.execute("PRAGMA table_info(grade_items)")
+        }
+        if "snapshot" not in grade_columns:
             connection.execute("ALTER TABLE grade_items ADD COLUMN snapshot TEXT")
-        batch_columns = {row['name'] for row in connection.execute('PRAGMA table_info(batch_jobs)')}
-        if 'answer_layout' not in batch_columns:
-            connection.execute("ALTER TABLE batch_jobs ADD COLUMN answer_layout TEXT NOT NULL DEFAULT 'auto'")
+        batch_columns = {row["name"] for row in connection.execute("PRAGMA table_info(batch_jobs)")}
+        if "answer_layout" not in batch_columns:
+            connection.execute(
+                "ALTER TABLE batch_jobs ADD COLUMN answer_layout TEXT NOT NULL DEFAULT 'auto'"
+            )
         # Review used to block finalization even when every question already had
         # a numeric score. Migrate those historical rows to the new optional-
         # review workflow without touching genuinely scoreless papers.
@@ -291,4 +300,3 @@ def initialize_database(path: Path | None = None) -> None:
                 ("english", "英语", 0),
             ],
         )
-
