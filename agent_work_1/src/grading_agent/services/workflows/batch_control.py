@@ -3,7 +3,7 @@
 from contextlib import contextmanager
 from contextvars import ContextVar
 
-from grading_agent.db import transaction
+from grading_agent.storage.db import transaction
 
 _batch = ContextVar("controlled_batch", default=None)
 _finishing = ContextVar("batch_finishing_result", default=False)
@@ -56,7 +56,7 @@ def bind_submission(submission_id):
 
 
 def control_batch(batch_id, action):
-    from grading_agent.repository import get_batch
+    from grading_agent.storage.repository import get_batch
 
     if action not in {"pause", "stop", "resume"}:
         raise ValueError("未知批阅控制操作")

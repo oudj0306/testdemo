@@ -8,9 +8,9 @@ import pypdfium2 as pdfium
 from PIL import Image, ImageOps
 
 from grading_agent.config import get_settings
-from grading_agent.repository import get_assessment, get_submission
 from grading_agent.services.documents.document_renderer import WORD_MEDIA, word_to_pdf
-from grading_agent.services.recognition.layout_templates import load_layout
+from grading_agent.services.recognition.layout.templates import load_layout
+from grading_agent.storage.repository import get_assessment, get_submission
 
 
 def safe_file(value):

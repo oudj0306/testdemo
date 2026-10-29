@@ -1,4 +1,4 @@
-param([int]$Port = 8001, [switch]$InitDbOnly, [switch]$CheckOcr, [switch]$PrintRuntime, [string]$PythonExe = '', [string]$DataDir = '')
+﻿param([int]$Port = 8001, [switch]$InitDbOnly, [switch]$CheckOcr, [switch]$PrintRuntime, [string]$PythonExe = '', [string]$DataDir = '')
 $ErrorActionPreference = 'Stop'
 $projectPath = $PSScriptRoot
 . (Join-Path $projectPath 'scripts/local-vision-shell.ps1')
@@ -62,7 +62,7 @@ try {
     if ($PrintRuntime) {
         & $pythonExe -c "import json,sys,os; from grading_agent.config import get_settings; s=get_settings(); print(json.dumps(dict(python=sys.executable,data_dir=str(s.data_dir),ocr_provider=s.ocr_provider,ocr_device=s.ocr_device,cache=os.environ.get('PADDLE_PDX_CACHE_HOME'))))"
     } elseif ($CheckOcr) {
-        & $pythonExe -c "import json; from grading_agent.config import get_settings; from grading_agent.services.ocr_diagnostics import check_ocr; s=get_settings(); r=check_ocr(s.ocr_device,s.data_dir/'runtime-check'); print(json.dumps(r,ensure_ascii=True)); raise SystemExit(0 if r['ok'] else 1)"
+        & $pythonExe -c "import json; from grading_agent.config import get_settings; from grading_agent.services.recognition.ocr.diagnostics import check_ocr; s=get_settings(); r=check_ocr(s.ocr_device,s.data_dir/'runtime-check'); print(json.dumps(r,ensure_ascii=True)); raise SystemExit(0 if r['ok'] else 1)"
     } elseif ($InitDbOnly) {
         & $pythonExe -m grading_agent.cli --init-db
     } else {

@@ -12,17 +12,17 @@ from typing import Callable
 from uuid import uuid4
 
 from grading_agent.config import get_settings
-from grading_agent.db import transaction, utc_now
-from grading_agent.repository import complete_batch, get_assessment, get_submission, new_id
+from grading_agent.infrastructure.telemetry import event, scope, timed
+from grading_agent.infrastructure.work_locks import SubmissionBusyError, submission_work
 from grading_agent.services.scoring.submission_grader import grade_submission
-from grading_agent.services.telemetry import event, scope, timed
-from grading_agent.services.work_locks import SubmissionBusyError, submission_work
 from grading_agent.services.workflows.batch_control import (
     BatchSuspended,
     batch_scope,
     checkpoint,
     finishing_result,
 )
+from grading_agent.storage.db import transaction, utc_now
+from grading_agent.storage.repository import complete_batch, get_assessment, get_submission, new_id
 
 logger = logging.getLogger(__name__)
 
@@ -236,13 +236,13 @@ class BatchQueue:
 
     def process_daily(self, jobs):
         """Extract a bounded cohort first, then grade each shared question."""
-        from grading_agent.db import utc_now
-        from grading_agent.repository import questions_for_submission
         from grading_agent.services.scoring.bulk_grader import grade_daily_items
         from grading_agent.services.scoring.submission_grader import (
             grading_question,
             requires_model,
         )
+        from grading_agent.storage.db import utc_now
+        from grading_agent.storage.repository import questions_for_submission
 
         settings = get_settings()
         ready, groups = [], {}
@@ -396,7 +396,7 @@ class BatchQueue:
 
 
 def enqueue_saved(assessment_id: str, submission_ids: list[str]) -> dict:
-    from grading_agent.repository import get_batch
+    from grading_agent.storage.repository import get_batch
 
     batch_id = new_id()
     with transaction() as connection:

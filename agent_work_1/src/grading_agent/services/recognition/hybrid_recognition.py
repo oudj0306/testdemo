@@ -2,9 +2,9 @@
 
 from pathlib import Path
 
-from grading_agent.repository import get_submission, record_token_usage, upsert_response
 from grading_agent.services.recognition.answer_extractor import reusable_answer_ids
 from grading_agent.services.workflows.batch_control import BatchSuspended, checkpoint
+from grading_agent.storage.repository import get_submission, record_token_usage, upsert_response
 
 
 def extract_uncertain_question(document, question, settings, diagnostics, layout, extract):
@@ -184,9 +184,9 @@ def supplement_saved_submission(submission, assessment, settings, extract):
     """Resume old local-only work without running the resident local model again."""
     from copy import deepcopy
 
-    from grading_agent.db import encode_json, transaction
     from grading_agent.services.documents.ingestion import IngestedDocument, NormalizedPage
-    from grading_agent.services.recognition.layout_templates import load_layout
+    from grading_agent.services.recognition.layout.templates import load_layout
+    from grading_agent.storage.db import encode_json, transaction
 
     report = deepcopy(submission.get("normalization_report") or {})
     diagnostics = report.get("local_recognition")

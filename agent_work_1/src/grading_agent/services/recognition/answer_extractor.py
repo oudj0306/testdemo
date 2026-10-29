@@ -13,7 +13,6 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field
 
 from grading_agent.config import Settings
-from grading_agent.model_catalog import apply_provider_options
 from grading_agent.services.documents.ingestion import (
     IngestedDocument,
     OCRAdapter,
@@ -21,6 +20,7 @@ from grading_agent.services.documents.ingestion import (
     extract_reference_text,
 )
 from grading_agent.services.documents.legacy_word import extract_doc_text
+from grading_agent.services.model_io.catalog import apply_provider_options
 from grading_agent.services.model_io.llm_client import (
     parse_json_object,
     response_output_text,
@@ -351,7 +351,7 @@ def extract_answers_with_model(
     apply_provider_options(payload, settings.openai_base_url, settings.enable_thinking)
     request = model_request(payload, settings)
     try:
-        from grading_agent.services.telemetry import request_json
+        from grading_agent.infrastructure.telemetry import request_json
 
         data, _ = request_json(request, settings, "extract", 180)
     except urllib.error.HTTPError as exc:

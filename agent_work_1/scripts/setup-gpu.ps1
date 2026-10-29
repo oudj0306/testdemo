@@ -1,4 +1,4 @@
-param([string]$PythonExe = "", [string]$Cuda = "cu118")
+﻿param([string]$PythonExe = "", [string]$Cuda = "cu118")
 $ErrorActionPreference = "Stop"
 $projectPath = Split-Path $PSScriptRoot -Parent
 Set-Location -LiteralPath $projectPath
@@ -31,7 +31,7 @@ if ($LASTEXITCODE -ne 0) {
 }
 & $gpuPython -m pip install paddlepaddle-gpu==3.3.0 --index-url "https://www.paddlepaddle.org.cn/packages/stable/$Cuda/"
 if ($LASTEXITCODE -ne 0) { throw 'Paddle GPU installation failed' }
-& $gpuPython -m pip install -e '.[dev]' 'paddleocr>=3.7,<4'
+& $gpuPython -m pip install -e '.[dev,local_recognition,ocr_engine]'
 if ($LASTEXITCODE -ne 0) { throw 'Application/OCR installation failed' }
 & $gpuPython -m pip check
 if ($LASTEXITCODE -ne 0) { throw 'Dependency validation failed' }

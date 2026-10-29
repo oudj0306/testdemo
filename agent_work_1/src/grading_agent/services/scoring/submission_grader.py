@@ -9,13 +9,8 @@ from difflib import SequenceMatcher
 from typing import Any
 
 from grading_agent.config import Settings
-from grading_agent.db import utc_now
-from grading_agent.repository import (
-    get_submission,
-    questions_for_submission,
-    record_token_usage,
-    replace_active_grades,
-)
+from grading_agent.infrastructure.telemetry import event, scope, timed
+from grading_agent.infrastructure.work_locks import submission_work
 from grading_agent.schemas import ScoreState
 from grading_agent.services.recognition.answer_quality import (
     confidence_threshold,
@@ -27,9 +22,14 @@ from grading_agent.services.scoring.grading_executor import question_executor
 from grading_agent.services.scoring.llm_grader import OpenAIGrader
 from grading_agent.services.scoring.review_policy import apply_review_policy
 from grading_agent.services.scoring.rule_grader import grade_with_rules
-from grading_agent.services.telemetry import event, scope, timed
-from grading_agent.services.work_locks import submission_work
 from grading_agent.services.workflows.batch_control import BatchSuspended, checkpoint, controlled
+from grading_agent.storage.db import utc_now
+from grading_agent.storage.repository import (
+    get_submission,
+    questions_for_submission,
+    record_token_usage,
+    replace_active_grades,
+)
 
 RULE_MODES = {"exact_text", "choice_set", "numeric", "symbolic"}
 

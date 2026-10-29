@@ -10,8 +10,8 @@ from uuid import uuid4
 
 from PIL import Image
 
+from grading_agent.infrastructure.telemetry import event, timed
 from grading_agent.services.documents.ingestion import OCRAdapter
-from grading_agent.services.telemetry import event, timed
 
 
 def dependencies():

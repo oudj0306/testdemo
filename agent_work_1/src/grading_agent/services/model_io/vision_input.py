@@ -7,8 +7,8 @@ from pathlib import Path
 from typing import Any
 
 from grading_agent.config import Settings
-from grading_agent.model_catalog import provider_for
 from grading_agent.services.documents.ingestion import NormalizedPage, pdf_visual_pages
+from grading_agent.services.model_io.catalog import provider_for
 
 
 def add_visual_document(

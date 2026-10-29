@@ -15,15 +15,48 @@ from fastapi.staticfiles import StaticFiles
 from starlette.concurrency import run_in_threadpool
 
 from grading_agent.config import get_settings, update_llm_settings
-from grading_agent.db import encode_json, initialize_database, transaction
-from grading_agent.model_catalog import (
+from grading_agent.schemas import (
+    AnswersUpsert,
+    AssessmentCreate,
+    BulkReviewRequest,
+    DocumentTextUpdate,
+    GradeBatchRequest,
+    KnowledgeApprove,
+    LLMSettingsUpdate,
+    QuestionCreate,
+    ReviewCreate,
+)
+from grading_agent.services.documents.assessment_compiler import (
+    compile_question_paper,
+    fill_missing_parts,
+)
+from grading_agent.services.documents.ingestion import (
+    ALLOWED_MEDIA,
+    OCRAdapter,
+    crop_question_regions,
+    extract_reference_text,
+    ingest_document,
+    sniff_media_type,
+)
+from grading_agent.services.model_io.catalog import (
     MODEL_PROVIDERS,
     apply_provider_options,
     provider_for,
     validate_model_connection,
 )
-from grading_agent.optimization_api import router as optimization_router
-from grading_agent.repository import (
+from grading_agent.services.model_io.llm_client import parse_json_object, response_output_text
+from grading_agent.services.model_io.model_transport import model_request
+from grading_agent.services.recognition.answer_extractor import (
+    extract_answers_with_model,
+    is_choice_question,
+    reusable_answer_ids,
+    validate_answer_layout,
+)
+from grading_agent.services.scoring.question_classifier import infer_question_route
+from grading_agent.services.scoring.submission_grader import grade_submission
+from grading_agent.services.workflows.batch_queue import BatchQueue, enqueue, enqueue_saved
+from grading_agent.storage.db import encode_json, initialize_database, transaction
+from grading_agent.storage.repository import (
     add_batch_item,
     bulk_review,
     complete_batch,
@@ -54,41 +87,8 @@ from grading_agent.repository import (
     upsert_assessment_document,
     upsert_response,
 )
-from grading_agent.schemas import (
-    AnswersUpsert,
-    AssessmentCreate,
-    BulkReviewRequest,
-    DocumentTextUpdate,
-    GradeBatchRequest,
-    KnowledgeApprove,
-    LLMSettingsUpdate,
-    QuestionCreate,
-    ReviewCreate,
-)
-from grading_agent.services.documents.assessment_compiler import (
-    compile_question_paper,
-    fill_missing_parts,
-)
-from grading_agent.services.documents.ingestion import (
-    ALLOWED_MEDIA,
-    OCRAdapter,
-    crop_question_regions,
-    extract_reference_text,
-    ingest_document,
-    sniff_media_type,
-)
-from grading_agent.services.model_io.llm_client import parse_json_object, response_output_text
-from grading_agent.services.model_io.model_transport import model_request
-from grading_agent.services.recognition.answer_extractor import (
-    extract_answers_with_model,
-    is_choice_question,
-    reusable_answer_ids,
-    validate_answer_layout,
-)
-from grading_agent.services.scoring.question_classifier import infer_question_route
-from grading_agent.services.scoring.submission_grader import grade_submission
-from grading_agent.services.workflows.batch_queue import BatchQueue, enqueue, enqueue_saved
-from grading_agent.workspace_views import router as workspace_router
+from grading_agent.web.optimization_api import router as optimization_router
+from grading_agent.web.workspace_views import router as workspace_router
 
 MAX_UPLOAD_BYTES = 25 * 1024 * 1024
 PACKAGE_DIR = Path(__file__).resolve().parent
@@ -135,7 +135,7 @@ def persist_submission(
             "answer_layout", answer_layout
         )
     answer_layout = validate_answer_layout(answer_layout)
-    from grading_agent.services.recognition.layout_templates import load_layout
+    from grading_agent.services.recognition.layout.templates import load_layout
 
     local_layout = load_layout(assessment)
     has_regions = bool(local_layout) or any(
@@ -336,7 +336,7 @@ def persist_submission(
     for question in assessment["questions"]:
         crop = crops.get(question["id"])
         if crop and question["id"] not in retained_ids:
-            from grading_agent.services.telemetry import event, timed
+            from grading_agent.infrastructure.telemetry import event, timed
 
             with timed("local_ocr"):
                 text, confidence, source = ocr.extract(crop)
@@ -452,7 +452,7 @@ def store_submission(assessment, student_ref, content, content_type, answer_layo
 
 
 def prepare_submission(submission_id):
-    from grading_agent.services.work_locks import submission_work
+    from grading_agent.infrastructure.work_locks import submission_work
 
     with submission_work(get_settings().database_path, submission_id):
         return _prepare_submission_locked(submission_id)
@@ -500,7 +500,7 @@ def home() -> FileResponse:
 @app.get("/api/health")
 def health() -> dict[str, Any]:
     settings = get_settings()
-    from grading_agent.services.recognition.ocr_runtime import runtime_status
+    from grading_agent.services.recognition.ocr.runtime import runtime_status
 
     return {
         "status": "ok",
@@ -524,7 +524,7 @@ def ocr_check() -> dict[str, Any]:
         raise HTTPException(
             400, "请先在“可选 · 识别加速”选择 PaddleOCR 并保存；仅远程模型方式无需自检"
         )
-    from grading_agent.services.recognition.ocr_diagnostics import check_ocr
+    from grading_agent.services.recognition.ocr.diagnostics import check_ocr
 
     return check_ocr(settings.ocr_device, PACKAGE_DIR.parents[1] / ".cache" / "ocr-check")
 
@@ -829,7 +829,7 @@ def _prepare_questions(assessment_id: str, *, structure_only: bool) -> dict[str,
                     "review_policy": "always_review",
                 },
             )
-        from grading_agent.repository import create_questions_if_empty
+        from grading_agent.storage.repository import create_questions_if_empty
 
         create_questions_if_empty(assessment_id, items)
         return {"assessment": get_assessment(assessment_id), "usage": usage}
@@ -1153,7 +1153,7 @@ def answers_upsert(submission_id: str, payload: AnswersUpsert) -> dict[str, Any]
 
 @app.post("/api/submissions/{submission_id}/grade")
 def submission_grade(submission_id: str, pending_only: bool = False) -> dict[str, Any]:
-    from grading_agent.services.work_locks import SubmissionBusyError, submission_work
+    from grading_agent.infrastructure.work_locks import SubmissionBusyError, submission_work
 
     try:
         settings = get_settings()

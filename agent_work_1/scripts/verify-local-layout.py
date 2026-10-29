@@ -23,7 +23,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 from grading_agent import config
 from grading_agent.app import app
-from grading_agent.services.recognition import layout_templates as templates
+from grading_agent.services.recognition.layout import templates as templates
 
 
 def png(image):

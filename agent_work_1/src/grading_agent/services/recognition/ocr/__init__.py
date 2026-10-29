@@ -1,0 +1,1 @@
+"""PaddleOCR loading and diagnostics."""

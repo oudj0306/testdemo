@@ -9,6 +9,8 @@ description = "Auditable math homework and exam grading MVP"
 requires-python = ">=3.11"
 dependencies = [
   "fastapi>=0.115,<1",
+  "starlette>=0.40,<2",
+  "packaging>=24,<27",
   "uvicorn>=0.34,<1",
   "python-multipart>=0.0.20,<1",
   "pydantic>=2.10,<3",
@@ -26,12 +28,21 @@ dev = [
   "ruff>=0.17,<0.18",
 ]
 local_recognition = [
-  "opencv-python-headless>=4.10,<5",
-  "numpy>=1.26,<3",
+  "opencv-contrib-python>=4.10,<5",
+  "numpy>=1.26,<2.4",
 ]
+# OCR frontend only: install the CPU/CUDA Paddle runtime separately.
+ocr_engine = [
+  "paddleocr>=3.7,<3.8",
+  "opencv-contrib-python==4.10.0.84",
+  "numpy>=1.26,<2.4",
+]
+# CPU only. GPU setup uses ocr_engine plus the official CUDA wheel.
 ocr = [
-  "paddleocr>=3.7,<4",
-  "paddlepaddle>=3.3,<4",
+  "paddleocr>=3.7,<3.8",
+  "paddlepaddle>=3.3,<3.4",
+  "opencv-contrib-python==4.10.0.84",
+  "numpy>=1.26,<2.4",
 ]
 
 [project.scripts]

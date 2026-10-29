@@ -7,8 +7,8 @@ from pathlib import Path
 from PIL import Image
 
 from grading_agent.app import store_submission
-from grading_agent.db import initialize_database
-from grading_agent.repository import (
+from grading_agent.storage.db import initialize_database
+from grading_agent.storage.repository import (
     create_assessment,
     create_question,
     create_review,

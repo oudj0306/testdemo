@@ -10,9 +10,9 @@ from pathlib import Path
 from typing import Any
 
 from grading_agent.config import Settings
-from grading_agent.model_catalog import apply_provider_options
 from grading_agent.services.documents.ingestion import docx_embedded_images
 from grading_agent.services.documents.legacy_word import extract_doc_text
+from grading_agent.services.model_io.catalog import apply_provider_options
 from grading_agent.services.model_io.llm_client import (
     parse_json_object,
     response_output_text,

@@ -11,8 +11,9 @@ from dataclasses import dataclass
 from typing import Any
 
 from grading_agent.config import Settings
-from grading_agent.model_catalog import apply_provider_options
+from grading_agent.infrastructure.telemetry import event, request_json, scope
 from grading_agent.schemas import ScoreState
+from grading_agent.services.model_io.catalog import apply_provider_options
 from grading_agent.services.model_io.llm_client import (
     parse_json_object,
     response_output_text,
@@ -25,7 +26,6 @@ from grading_agent.services.scoring.grading_cache import (
     cache_key,
     review_revision,
 )
-from grading_agent.services.telemetry import event, request_json, scope
 
 GRADE_SCHEMA = {
     "type": "object",

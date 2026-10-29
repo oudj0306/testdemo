@@ -263,7 +263,7 @@ class OCRAdapter:
     def extract(self, path: Path) -> tuple[str, float | None, str]:
         if self.provider != "paddleocr":
             return "", None, "manual"
-        from grading_agent.services.recognition.ocr_runtime import recognize
+        from grading_agent.services.recognition.ocr.runtime import recognize
 
         return recognize(path, self.device)
 

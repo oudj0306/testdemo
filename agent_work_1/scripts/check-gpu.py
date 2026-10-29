@@ -14,7 +14,7 @@ os.environ.setdefault("HF_HOME", str(root / ".cache" / "huggingface"))
 import paddle
 from PIL import Image, ImageDraw, ImageFont
 
-from grading_agent.services.recognition.ocr_runtime import recognize, runtime_status
+from grading_agent.services.recognition.ocr.runtime import recognize, runtime_status
 
 assert paddle.is_compiled_with_cuda() and paddle.device.cuda.device_count() > 0
 paddle.set_device("gpu:0")

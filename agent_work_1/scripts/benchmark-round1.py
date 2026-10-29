@@ -37,17 +37,31 @@ def main():
     os.environ.pop("OPENAI_API_KEY", None)
     sys.path.insert(0, str(args.source.resolve()))
     from grading_agent import config
-    from grading_agent.db import initialize_database
-    from grading_agent.repository import (
-        create_assessment,
-        create_question,
-        create_submission_record,
-        get_batch,
-        get_submission,
-        publish_assessment,
-        token_usage_for_assessment,
-        upsert_response,
-    )
+
+    if (args.source / "grading_agent/storage/db.py").is_file():
+        from grading_agent.storage.db import initialize_database
+        from grading_agent.storage.repository import (
+            create_assessment,
+            create_question,
+            create_submission_record,
+            get_batch,
+            get_submission,
+            publish_assessment,
+            token_usage_for_assessment,
+            upsert_response,
+        )
+    else:
+        from grading_agent.db import initialize_database
+        from grading_agent.repository import (
+            create_assessment,
+            create_question,
+            create_submission_record,
+            get_batch,
+            get_submission,
+            publish_assessment,
+            token_usage_for_assessment,
+            upsert_response,
+        )
 
     # The benchmark deliberately supports both the frozen baseline and the
     # reorganized implementation selected by --source.

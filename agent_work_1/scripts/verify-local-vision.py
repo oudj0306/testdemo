@@ -9,9 +9,9 @@ from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont
 
 from grading_agent.config import get_settings
-from grading_agent.repository import get_assessment
-from grading_agent.services.recognition.layout_templates import layout_status
+from grading_agent.services.recognition.layout.templates import layout_status
 from grading_agent.services.recognition.local_vision import runtime, transcribe
+from grading_agent.storage.repository import get_assessment
 
 
 def main():

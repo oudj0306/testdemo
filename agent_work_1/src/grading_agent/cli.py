@@ -4,7 +4,7 @@ import argparse
 
 import uvicorn
 
-from grading_agent.db import initialize_database
+from grading_agent.storage.db import initialize_database
 
 
 def main() -> None:

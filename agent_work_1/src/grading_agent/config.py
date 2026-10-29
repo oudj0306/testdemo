@@ -79,7 +79,7 @@ def get_settings() -> Settings:
         return _settings_cache
     data_dir = _data_dir()
     overrides = _read_overrides()
-    from grading_agent.services.runtime_paths import inherited_ocr_defaults
+    from grading_agent.infrastructure.runtime_paths import inherited_ocr_defaults
 
     inherited = (
         inherited_ocr_defaults(PROJECT_ROOT)

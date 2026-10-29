@@ -8,7 +8,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 from grading_agent.config import Settings
-from grading_agent.model_catalog import MODEL_PROVIDERS, provider_for
+from grading_agent.services.model_io.catalog import MODEL_PROVIDERS, provider_for
 
 
 def prepare_wire_payload(payload: dict[str, Any], settings: Settings) -> tuple[str, dict[str, Any]]:
