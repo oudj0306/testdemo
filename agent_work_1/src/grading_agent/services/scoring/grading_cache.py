@@ -1,6 +1,6 @@
 """Exact-answer reuse of completed, evidence-backed grading consensus only.
 
-This disposable cache does not replace the grading/audit database. Its SQLite
+This disposable cache does not replace the grading/audit database. Its database
 lease prevents duplicate concurrent requests, including across server workers.
 Any cache failure leaves the normal grading path available.
 """
@@ -11,13 +11,15 @@ import hashlib
 import json
 import logging
 import math
+import random
 import sqlite3
 import time
 import uuid
 from contextlib import closing, contextmanager
 from dataclasses import asdict
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from threading import Lock
 from typing import Any, Iterator
 
 from grading_agent.config import Settings
@@ -29,6 +31,28 @@ from grading_agent.storage.mysql import mysql_enabled
 LOGGER = logging.getLogger(__name__)
 CACHE_VERSION = "stable-grade-v1"
 ZERO_USAGE = {"input_tokens": 0, "output_tokens": 0, "cached_tokens": 0}
+
+
+CACHE_TTL_SECONDS = 7 * 86400
+CACHE_JITTER_SECONDS = 2 * 86400
+LEASE_SECONDS = 480
+_maintenance_lock = Lock()
+_next_cleanup = 0.0
+_mysql_retry_after = 0.0
+
+
+def cache_lifetime(key: str) -> int:
+    spread = int.from_bytes(hashlib.sha256(key.encode()).digest()[:4], "big")
+    return CACHE_TTL_SECONDS + spread % CACHE_JITTER_SECONDS
+
+
+class CacheCoolingDown(RuntimeError):
+    """The optional MySQL cache recently failed and is temporarily bypassed."""
+
+
+def _mark_mysql_cache_failure() -> None:
+    global _mysql_retry_after
+    _mysql_retry_after = time.monotonic() + 15
 
 
 def review_revision(settings: Settings, question_id: str) -> str | None:
@@ -139,15 +163,21 @@ class StableGradeCache:
         self.path = data_dir / "grading_cache.sqlite3"
 
     @contextmanager
-    def _connect(self) -> Iterator:
+    def _connect(self, *, release: bool = False) -> Iterator:
         if mysql_enabled():
-            with closing(connect()) as db:
-                try:
-                    yield db
-                    db.commit()
-                except Exception:
-                    db.rollback()
-                    raise
+            if not release and time.monotonic() < _mysql_retry_after:
+                raise CacheCoolingDown()
+            try:
+                with closing(connect()) as db:
+                    try:
+                        yield db
+                        db.commit()
+                    except Exception:
+                        db.rollback()
+                        raise
+            except (*DATABASE_ERRORS, OSError):
+                _mark_mysql_cache_failure()
+                raise
             return
         self.path.parent.mkdir(parents=True, exist_ok=True)
         db = sqlite3.connect(self.path, timeout=2)
@@ -168,47 +198,50 @@ class StableGradeCache:
     def single_flight(self, key: str) -> Iterator[bool]:
         owner = uuid.uuid4().hex
         acquired = False
-        # One grading has at most 3 x 45s model calls. The lease also recovers
-        # automatically after a crashed process without holding a DB transaction.
+        # Allow for a bulk request followed by up to eight individual retries.
+        # A crashed worker leaves a lease that expires without holding a transaction.
         deadline = time.monotonic() + 155
+        delay = 0.05
         try:
             while not acquired:
                 try:
                     with self._connect() as db:
                         now = time.time()
                         if mysql_enabled():
-                            db.execute("BEGIN IMMEDIATE")
+                            db.execute(
+                                """INSERT INTO grade_leases(cache_key,owner,expires_at) VALUES (?,?,?)
+                                ON DUPLICATE KEY UPDATE
+                                owner=IF(expires_at < ?, VALUES(owner), owner),
+                                expires_at=IF(expires_at < ?, VALUES(expires_at), expires_at)""",
+                                (key, owner, now + LEASE_SECONDS, now, now),
+                            )
                             lease = db.execute(
-                                "SELECT expires_at FROM grade_leases WHERE cache_key=?", (key,)
+                                "SELECT owner FROM grade_leases WHERE cache_key=?", (key,)
                             ).fetchone()
-                            acquired = lease is None or lease["expires_at"] < now
-                            if acquired:
-                                db.execute(
-                                    "REPLACE INTO grade_leases(cache_key,owner,expires_at) VALUES (?,?,?)",
-                                    (key, owner, now + 150),
-                                )
-                            if acquired:
-                                break
+                            acquired = lease["owner"] == owner
                         else:
                             cursor = db.execute(
                                 """INSERT INTO grade_leases(cache_key,owner,expires_at) VALUES (?,?,?)
                                 ON CONFLICT(cache_key) DO UPDATE SET owner=excluded.owner,expires_at=excluded.expires_at
                                 WHERE grade_leases.expires_at < ?""",
-                                (key, owner, now + 150, now),
+                                (key, owner, now + LEASE_SECONDS, now),
                             )
                             acquired = bool(cursor.rowcount)
+                except CacheCoolingDown:
+                    break
                 except (*DATABASE_ERRORS, OSError):
                     LOGGER.warning("Grade cache unavailable; continuing normal grading")
                     break
                 if not acquired:
                     if time.monotonic() >= deadline:
                         break
-                    time.sleep(0.05)
+                    time.sleep(delay + random.uniform(0, delay / 2))
+                    delay = min(delay * 2, 1.0)
             yield acquired
         finally:
             if acquired:
                 try:
-                    with self._connect() as db:
+                    with self._connect(release=True) as db:
                         db.execute(
                             "DELETE FROM grade_leases WHERE cache_key=? AND owner=?", (key, owner)
                         )
@@ -223,6 +256,8 @@ class StableGradeCache:
                     (key,),
                 ).fetchone()
             if row is None or row[1] < (1 if allow_single else 2):
+                return None
+            if datetime.fromisoformat(row[2]).timestamp() + cache_lifetime(key) <= time.time():
                 return None
             data = json.loads(row[0])
             expected_state = (
@@ -250,6 +285,8 @@ class StableGradeCache:
                 f"stable_grade_cache_hit={key};source_created_at={row[2]};independent_passes={row[1]}"
             )
             return GradeDecision(**data)
+        except CacheCoolingDown:
+            return None
         except (*DATABASE_ERRORS, OSError, ValueError, TypeError, KeyError, AttributeError):
             LOGGER.warning("Invalid or unavailable grade cache entry; grading normally")
             return None
@@ -274,5 +311,28 @@ class StableGradeCache:
                     "INSERT OR REPLACE INTO stable_grades(cache_key,decision,independent_passes,created_at) VALUES (?,?,?,?)",
                     (key, encoded, pass_count, datetime.now(UTC).isoformat()),
                 )
+            self._prune_mysql_cache()
+        except CacheCoolingDown:
+            return
         except (*DATABASE_ERRORS, OSError, TypeError, ValueError):
             LOGGER.warning("Could not save stable grade cache; original grade remains valid")
+
+    def _prune_mysql_cache(self) -> None:
+        """Prune a bounded number of cold records after a successful cache write."""
+        global _next_cleanup
+        if not mysql_enabled():
+            return
+        with _maintenance_lock:
+            if time.monotonic() < _next_cleanup:
+                return
+            _next_cleanup = time.monotonic() + 60
+        cutoff = datetime.now(UTC) - timedelta(seconds=CACHE_TTL_SECONDS + CACHE_JITTER_SECONDS)
+        with self._connect() as db:
+            db.execute(
+                "DELETE FROM stable_grades WHERE created_at < ? ORDER BY created_at LIMIT 256",
+                (cutoff.isoformat(),),
+            )
+            db.execute(
+                "DELETE FROM grade_leases WHERE expires_at < ? ORDER BY expires_at LIMIT 256",
+                (time.time(),),
+            )

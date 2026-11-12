@@ -3,7 +3,6 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
-from fastapi.staticfiles import StaticFiles
 from starlette.concurrency import run_in_threadpool
 
 from grading_agent.services.workflows.batch_queue import BatchQueue
@@ -30,6 +29,7 @@ from grading_agent.web.routes import (
     submissions,
     training,
 )
+from grading_agent.web.static_assets import VersionedStaticFiles
 from grading_agent.web.workspace_views import router as workspace_router
 
 
@@ -46,7 +46,7 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(title="作业/试卷批改 Agent", version="0.1.0", lifespan=lifespan)
 app.include_router(workspace_router)
-app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+app.mount("/static", VersionedStaticFiles(directory=STATIC_DIR), name="static")
 
 
 for feature in (

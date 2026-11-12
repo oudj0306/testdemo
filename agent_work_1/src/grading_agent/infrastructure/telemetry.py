@@ -3,10 +3,10 @@
 import json
 import logging
 import urllib.request
-from contextlib import closing, contextmanager
+from contextlib import closing, contextmanager, nullcontext
 from contextvars import ContextVar
 from datetime import datetime
-from threading import Lock
+from threading import BoundedSemaphore, Lock
 from time import perf_counter
 from uuid import uuid4
 
@@ -16,6 +16,7 @@ from grading_agent.storage.mysql import mysql_enabled
 
 _scope = ContextVar("performance_scope", default={})
 LOG = logging.getLogger(__name__)
+_grading_request_slots = BoundedSemaphore(4)
 
 
 @contextmanager
@@ -93,8 +94,10 @@ def request_json(request, settings, stage, timeout, **details):
     start, request_id = perf_counter(), uuid4().hex
     data, success = {}, False
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
-            data = json.loads(response.read().decode("utf-8"))
+        # Cache misses and cache outages share the same upstream concurrency budget.
+        with _grading_request_slots if stage == "grade" else nullcontext():
+            with urllib.request.urlopen(request, timeout=timeout) as response:
+                data = json.loads(response.read().decode("utf-8"))
         if not isinstance(data, dict):
             data = {}
             raise ValueError("模型响应必须是 JSON 对象")

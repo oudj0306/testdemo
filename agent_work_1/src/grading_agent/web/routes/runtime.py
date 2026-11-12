@@ -6,7 +6,7 @@ import urllib.request
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 
 from grading_agent.config import get_settings, update_llm_settings
@@ -24,14 +24,15 @@ from grading_agent.services.model_io.catalog import (
 )
 from grading_agent.services.model_io.llm_client import parse_json_object, response_output_text
 from grading_agent.services.model_io.model_transport import model_request
-from grading_agent.web.paths import PACKAGE_DIR, STATIC_DIR
+from grading_agent.web.paths import PACKAGE_DIR
+from grading_agent.web.static_assets import render_index
 
 router = APIRouter()
 
 
 @router.get("/", include_in_schema=False)
-def home() -> FileResponse:
-    return FileResponse(STATIC_DIR / "index.html", headers={"Cache-Control": "no-store"})
+def home() -> HTMLResponse:
+    return HTMLResponse(render_index(), headers={"Cache-Control": "no-store"})
 
 
 @router.get("/api/health")

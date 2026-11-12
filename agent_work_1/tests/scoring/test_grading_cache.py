@@ -10,7 +10,7 @@ import pytest
 from grading_agent.config import get_settings
 from grading_agent.schemas import ScoreState
 from grading_agent.services.scoring import llm_grader
-from grading_agent.services.scoring.grading_cache import StableGradeCache
+from grading_agent.services.scoring.grading_cache import StableGradeCache, cache_lifetime
 from grading_agent.services.scoring.llm_grader import GradingResponseError, LLMResult, OpenAIGrader
 from grading_agent.services.scoring.review_policy import apply_review_policy
 
@@ -39,6 +39,23 @@ def settings(**kwargs):
         llm_grading_passes=3,
         **kwargs,
     )
+
+
+def test_expired_grade_reloads_and_lifetimes_are_spread(monkeypatch):
+    calls = mock_consensus(monkeypatch)
+    configured = settings()
+    grader = OpenAIGrader(configured)
+    grader.grade(question(), "学生证据")
+    grader.grade(question(), "学生证据")
+    assert len(calls) == 2
+    cache = StableGradeCache(configured.data_dir)
+    with sqlite3.connect(cache.path) as db:
+        db.execute("UPDATE stable_grades SET created_at='2000-01-01T00:00:00+00:00'")
+    grader.grade(question(), "学生证据")
+    assert len(calls) == 4
+    lifetimes = {cache_lifetime(str(i)) for i in range(20)}
+    assert len(lifetimes) > 1
+    assert all(7 * 86400 <= value < 9 * 86400 for value in lifetimes)
 
 
 def mock_consensus(monkeypatch, *, score=8, evidence="学生证据", review=False):
@@ -308,8 +325,18 @@ def test_review_race_during_cache_read_bypasses_stale_hit(monkeypatch):
     calls = mock_consensus(monkeypatch)
     config = settings()
     grader = OpenAIGrader(config)
-    revisions = iter(["same", "same", "same", "same", "same", "changed", "changed"])
-    monkeypatch.setattr(llm_grader, "review_revision", lambda *a: next(revisions, "changed"))
+    revision = "same"
+    original_get = StableGradeCache.get
+
+    def get_during_review(self, *args, **kwargs):
+        nonlocal revision
+        result = original_get(self, *args, **kwargs)
+        if result is not None:
+            revision = "changed"
+        return result
+
+    monkeypatch.setattr(llm_grader, "review_revision", lambda *a: revision)
+    monkeypatch.setattr(StableGradeCache, "get", get_during_review)
     grader.grade(question(), "学生证据")
     grader.grade(question(), "学生证据")
     # The cached result was read but not returned after the revision changed;

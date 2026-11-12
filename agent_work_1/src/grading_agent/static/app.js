@@ -65,7 +65,23 @@ function refreshReviewHint(){
 }
 let reviewViewValue=$('reviewOnly').value;
 $('reviewOnly').onchange=()=>{if(!mayLeaveDraft()){$('reviewOnly').value=reviewViewValue;return;}reviewViewValue=$('reviewOnly').value;if(rerenderCurrentQuestion)rerenderCurrentQuestion();};
-async function api(path, options={}) {const r=await fetch(path,options); const body=await r.json().catch(()=>({})); if(!r.ok) throw Error(typeof body.detail==='string'?body.detail:JSON.stringify(body.detail||'请求失败')); return body;}
+async function api(path, options={}) {const r=await fetch(path,{cache:'no-store',...options}); const body=await r.json().catch(()=>({})); if(!r.ok) throw Error(typeof body.detail==='string'?body.detail:JSON.stringify(body.detail||'请求失败')); return body;}
+
+let modelCatalogRequest = null;
+let modelCatalogExpiresAt = 0;
+function loadModelCatalog() {
+  if (modelCatalogRequest && Date.now() < modelCatalogExpiresAt) return modelCatalogRequest;
+  modelCatalogExpiresAt = Infinity;
+  modelCatalogRequest = api('/api/model-catalog').then(catalog => {
+    modelCatalogExpiresAt = Date.now() + 5 * 60 * 1000;
+    return catalog;
+  }).catch(error => {
+    modelCatalogRequest = null;
+    modelCatalogExpiresAt = 0;
+    throw error;
+  });
+  return modelCatalogRequest;
+}
 function notice(text,error=false){$('notice').textContent=text;$('notice').className=error?'error':'';}
 function action(id,fn){$(id).onclick=async()=>{const b=$(id);if(b.disabled)return;b.disabled=true;b.setAttribute('aria-busy','true');notice('正在处理，请稍候…');try{await fn();}catch(e){notice(e.message,true);}finally{b.disabled=false;b.removeAttribute('aria-busy');if(id==='generateLayout')updateLayoutEntry();if(id==='saveRegion')refreshRegionSaveButton();}};}
 function draftValue(e){return e.type==='checkbox'?String(e.checked):e.value;}
@@ -460,7 +476,7 @@ function renderModelProvider(keepModel){const id=$('llmProvider').value,p=modelP
  displayedProvider=id;
 }
 $('llmProvider').addEventListener('change',()=>{if(displayedProvider==='custom')customConnectionDraft={model:$('llmModel').value,base_url:$('llmBaseUrl').value};renderModelProvider();});
-async function loadSettings(){const [s,c]=await Promise.all([api('/api/settings'),api('/api/model-catalog')]);modelProviders=c.providers||[];savedConnection=s;
+async function loadSettings(){const [s,c]=await Promise.all([api('/api/settings'),loadModelCatalog()]);modelProviders=c.providers||[];savedConnection=s;
  $('llmProvider').innerHTML=modelProviders.map(p=>'<option value="'+esc(p.id)+'">'+esc(p.name)+'</option>').join('')+'<option value="custom">自定义连接</option>';
  $('llmProvider').value=s.provider||'custom';customConnectionDraft=s.provider==='custom'?{model:s.model,base_url:s.base_url}:{model:'',base_url:''};$('llmModel').value=s.model;$('llmBaseUrl').value=s.base_url;renderModelProvider(s.model);
  $('hybridFallback').checked=s.hybrid_fallback_enabled!==false;$('gradingProfile').value=s.grading_profile||'legacy';$('llmPasses').value=String(s.llm_grading_passes);$('llmExtract').checked=s.llm_extract_answers;$('llmThinking').checked=s.enable_thinking;$('llmKey').value='';$('settingsStatus').textContent=s.api_key_set?'当前密钥：'+s.api_key_masked:'尚未配置密钥，过程题与 AI 生成答案将不可用。';$('ocrProvider').value=s.ocr_provider;$('ocrDevice').value=s.ocr_device;$('localOcrFirst').checked=s.local_ocr_first;$('reviewMode').value=s.review_mode;$('sampleRate').value=String(Math.round(s.review_sample_rate*100));$('confidenceThreshold').value=s.review_confidence_threshold;}

@@ -202,6 +202,9 @@ class OpenAIGrader:
         if key is None:
             return self._grade_uncached(question, answer)[0]
         cache = StableGradeCache(self.settings.data_dir)
+        cached = cache.get(key, max_score)
+        if cached is not None and review_revision(self.settings, question["id"]) == revision:
+            return cached
         with cache.single_flight(key) as available:
             # A review can have been committed while this worker awaited a lease.
             current_revision = review_revision(self.settings, question["id"])

@@ -3,6 +3,7 @@
 import hashlib
 import os
 import re
+from configparser import ConfigParser
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -53,15 +54,24 @@ def mysql_statement(sql: str) -> str:
 
 class MySQLConnection:
     def __init__(self):
-        if not os.getenv("GRADING_MYSQL_USER") or "GRADING_MYSQL_PASSWORD" not in os.environ:
-            raise ValueError("Set GRADING_MYSQL_USER and GRADING_MYSQL_PASSWORD for local MySQL")
-        database = os.getenv("GRADING_MYSQL_DATABASE", "grading_agent")
+        from grading_agent.config import get_settings
+
+        config = ConfigParser(interpolation=None)
+        config.read(get_settings().data_dir / "mysql.local.ini", encoding="utf-8-sig")
+        local = config["mysql"] if config.has_section("mysql") else {}
+        user = os.getenv("GRADING_MYSQL_USER", local.get("user"))
+        password = os.getenv("GRADING_MYSQL_PASSWORD", local.get("password"))
+        if not user or password is None:
+            raise ValueError(
+                "Configure data/mysql.local.ini or GRADING_MYSQL_USER and GRADING_MYSQL_PASSWORD"
+            )
+        database = os.getenv("GRADING_MYSQL_DATABASE", local.get("database", "grading_agent"))
         self.lock_name = "grading:" + hashlib.sha256(database.encode()).hexdigest()[:40]
         self.connection = pymysql.connect(
             host="127.0.0.1",
-            port=int(os.getenv("GRADING_MYSQL_PORT", "3306")),
-            user=os.environ["GRADING_MYSQL_USER"],
-            password=os.environ["GRADING_MYSQL_PASSWORD"],
+            port=int(os.getenv("GRADING_MYSQL_PORT", local.get("port", "3306"))),
+            user=user,
+            password=password,
             database=database,
             charset="utf8mb4",
             binary_prefix=True,
@@ -104,7 +114,19 @@ class MySQLConnection:
 
 
 def create_schema(connection: MySQLConnection) -> None:
+    connection.execute("BEGIN IMMEDIATE")
     schema = Path(__file__).with_name("mysql_schema.sql").read_text(encoding="utf-8")
     for statement in schema.split(";"):
         if statement.strip():
             connection.execute(statement)
+    # Upgrade existing installations without replacing their cache tables.
+    for table, index, column in (
+        ("stable_grades", "idx_stable_grades_created_at", "created_at"),
+        ("grade_leases", "idx_grade_leases_expires_at", "expires_at"),
+    ):
+        if not connection.execute(
+            "SELECT 1 FROM information_schema.statistics "
+            "WHERE table_schema=DATABASE() AND table_name=? AND index_name=?",
+            (table, index),
+        ).fetchone():
+            connection.execute(f"CREATE INDEX {index} ON {table} ({column})")
