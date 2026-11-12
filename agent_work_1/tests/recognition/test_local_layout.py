@@ -182,7 +182,7 @@ def workspace(monkeypatch):
     )
     calls = []
     monkeypatch.setattr(
-        "grading_agent.app.extract_answers_with_model",
+        "grading_agent.services.workflows.submission_processing.extract_answers_with_model",
         lambda *a, **kw: pytest.fail("No student vision API"),
     )
     monkeypatch.setattr(

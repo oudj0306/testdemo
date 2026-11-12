@@ -43,7 +43,7 @@ def test_generated_questions_are_atomic_and_usage_is_recorded(monkeypatch, probl
     if problem == "missing_key":
         del items[1]["candidate_answer"]
     monkeypatch.setattr(
-        "grading_agent.app.compile_question_paper",
+        "grading_agent.web.routes.assessments.compile_question_paper",
         lambda *a: {"questions": items, "usage": {"input_tokens": 123}},
     )
     with TestClient(app) as client:
@@ -77,7 +77,7 @@ def test_empty_paper_prepares_questions_then_layout_without_manual_numbering(mon
         calls.append("questions")
         return {"questions": [candidate("一-1"), candidate("二-1")], "usage": {}}
 
-    monkeypatch.setattr("grading_agent.app.compile_question_paper", compile)
+    monkeypatch.setattr("grading_agent.web.routes.assessments.compile_question_paper", compile)
     with TestClient(app) as client:
         a = client.post(
             "/api/assessments", json={"title": "Synthetic no questions", "subject_codes": []}

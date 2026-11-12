@@ -204,8 +204,8 @@ def test_text_route_and_visual_fallback(monkeypatch, confidence, kind, layout, e
     from fastapi.testclient import TestClient
     from PIL import Image
 
-    from grading_agent import app as module
     from grading_agent import config
+    from grading_agent.services.workflows import submission_processing as module
 
     settings = replace(
         config.get_settings(), openai_api_key="test", ocr_provider="paddleocr", local_ocr_first=True
@@ -228,7 +228,9 @@ def test_text_route_and_visual_fallback(monkeypatch, confidence, kind, layout, e
         ], {"input_tokens": 0, "output_tokens": 0, "cached_tokens": 0}
 
     monkeypatch.setattr(module, "extract_answers_with_model", extract)
-    with TestClient(module.app) as client:
+    from grading_agent.app import app
+
+    with TestClient(app) as client:
         a = client.post("/api/assessments", json={"title": "路由测试"}).json()
         client.post(
             f"/api/assessments/{a['id']}/questions",

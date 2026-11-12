@@ -90,7 +90,7 @@ def test_card_template_does_not_generate_answers(monkeypatch):
             "usage": {},
         }
 
-    monkeypatch.setattr("grading_agent.app.compile_question_paper", structure)
+    monkeypatch.setattr("grading_agent.web.routes.assessments.compile_question_paper", structure)
 
     def fill(questions, *args):
         calls.append("answers")
@@ -101,7 +101,7 @@ def test_card_template_does_not_generate_answers(monkeypatch):
             "usage": {},
         }
 
-    monkeypatch.setattr("grading_agent.app.fill_missing_parts", fill)
+    monkeypatch.setattr("grading_agent.web.routes.assessments.fill_missing_parts", fill)
     with TestClient(app) as client:
         a = client.post("/api/assessments", json={"title": "Synthetic split workflow"}).json()
         base = "/api/assessments/" + a["id"]

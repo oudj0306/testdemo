@@ -7,7 +7,13 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Iterator
 
+import pymysql
+
 from grading_agent.config import get_settings
+from grading_agent.storage.mysql import MySQLConnection, create_schema, mysql_enabled
+
+DATABASE_ERRORS = (sqlite3.Error, pymysql.MySQLError)
+INTEGRITY_ERRORS = (sqlite3.IntegrityError, pymysql.IntegrityError)
 
 SCHEMA = """
 PRAGMA foreign_keys = ON;
@@ -226,7 +232,9 @@ def decode_json(value: str | None, default: Any) -> Any:
     return json.loads(value)
 
 
-def connect(path: Path | None = None) -> sqlite3.Connection:
+def connect(path: Path | None = None) -> sqlite3.Connection | MySQLConnection:
+    if path is None and mysql_enabled():
+        return MySQLConnection()
     database_path = path or get_settings().database_path
     connection = sqlite3.connect(database_path, check_same_thread=False, timeout=30)
     connection.row_factory = sqlite3.Row
@@ -235,7 +243,7 @@ def connect(path: Path | None = None) -> sqlite3.Connection:
 
 
 @contextmanager
-def transaction(path: Path | None = None) -> Iterator[sqlite3.Connection]:
+def transaction(path: Path | None = None) -> Iterator[sqlite3.Connection | MySQLConnection]:
     from time import perf_counter
 
     started = perf_counter()
@@ -255,24 +263,29 @@ def transaction(path: Path | None = None) -> Iterator[sqlite3.Connection]:
 
 def initialize_database(path: Path | None = None) -> None:
     with transaction(path) as connection:
-        connection.executescript(SCHEMA)
-        question_columns = {
-            row["name"] for row in connection.execute("PRAGMA table_info(questions)").fetchall()
-        }
-        if "answer_key_state" not in question_columns:
-            connection.execute(
-                "ALTER TABLE questions ADD COLUMN answer_key_state TEXT NOT NULL DEFAULT 'verified'"
-            )
-        grade_columns = {
-            row["name"] for row in connection.execute("PRAGMA table_info(grade_items)")
-        }
-        if "snapshot" not in grade_columns:
-            connection.execute("ALTER TABLE grade_items ADD COLUMN snapshot TEXT")
-        batch_columns = {row["name"] for row in connection.execute("PRAGMA table_info(batch_jobs)")}
-        if "answer_layout" not in batch_columns:
-            connection.execute(
-                "ALTER TABLE batch_jobs ADD COLUMN answer_layout TEXT NOT NULL DEFAULT 'auto'"
-            )
+        if isinstance(connection, MySQLConnection):
+            create_schema(connection)
+        else:
+            connection.executescript(SCHEMA)
+            question_columns = {
+                row["name"] for row in connection.execute("PRAGMA table_info(questions)").fetchall()
+            }
+            if "answer_key_state" not in question_columns:
+                connection.execute(
+                    "ALTER TABLE questions ADD COLUMN answer_key_state TEXT NOT NULL DEFAULT 'verified'"
+                )
+            grade_columns = {
+                row["name"] for row in connection.execute("PRAGMA table_info(grade_items)")
+            }
+            if "snapshot" not in grade_columns:
+                connection.execute("ALTER TABLE grade_items ADD COLUMN snapshot TEXT")
+            batch_columns = {
+                row["name"] for row in connection.execute("PRAGMA table_info(batch_jobs)")
+            }
+            if "answer_layout" not in batch_columns:
+                connection.execute(
+                    "ALTER TABLE batch_jobs ADD COLUMN answer_layout TEXT NOT NULL DEFAULT 'auto'"
+                )
         # Review used to block finalization even when every question already had
         # a numeric score. Migrate those historical rows to the new optional-
         # review workflow without touching genuinely scoreless papers.
@@ -282,9 +295,10 @@ def initialize_database(path: Path | None = None) -> None:
             AND EXISTS(SELECT 1 FROM questions q WHERE q.assessment_id=s.assessment_id)
             AND NOT EXISTS(
                 SELECT 1 FROM questions q
-                LEFT JOIN grade_items g ON g.question_id=q.id AND g.submission_id=s.id AND g.superseded_at IS NULL
-                WHERE q.assessment_id=s.assessment_id AND (
-                    g.id IS NULL OR (g.score IS NULL AND NOT EXISTS(
+                WHERE q.assessment_id=s.assessment_id AND NOT EXISTS(
+                    SELECT 1 FROM grade_items g
+                    WHERE g.question_id=q.id AND g.submission_id=s.id AND g.superseded_at IS NULL
+                    AND (g.score IS NOT NULL OR EXISTS(
                         SELECT 1 FROM review_events r WHERE r.grade_item_id=g.id
                     ))
                 )

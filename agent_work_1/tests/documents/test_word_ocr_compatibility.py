@@ -65,9 +65,7 @@ def test_word_template_page_and_crop(monkeypatch, tmp_path, media):
     doc = upsert_assessment_document(
         assessment["id"], "question_paper", media, str(source), media, "", "stored", 0
     )
-    monkeypatch.setattr(
-        "grading_agent.web.optimization_api.word_to_pdf", lambda path, root: rendered
-    )
+    monkeypatch.setattr("grading_agent.web.routes.layouts.word_to_pdf", lambda path, root: rendered)
     from grading_agent.app import app
 
     with TestClient(app) as client:

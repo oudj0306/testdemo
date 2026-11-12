@@ -183,7 +183,9 @@ def test_connection_probe_uses_saved_endpoint_and_structured_output():
                 "api_key": "fake-key",
             },
         )
-        with patch("grading_agent.app.urllib.request.urlopen", side_effect=fake_urlopen):
+        with patch(
+            "grading_agent.web.routes.runtime.urllib.request.urlopen", side_effect=fake_urlopen
+        ):
             result = client.post("/api/settings/test-connection")
     assert result.status_code == 200
     assert seen["url"] == provider["base_url"] + "/responses"
@@ -332,7 +334,9 @@ def test_chat_connection_probe_targets_chat_endpoint():
                 "api_key": "fake-key",
             },
         )
-        with patch("grading_agent.app.urllib.request.urlopen", side_effect=fake_urlopen):
+        with patch(
+            "grading_agent.web.routes.runtime.urllib.request.urlopen", side_effect=fake_urlopen
+        ):
             result = client.post("/api/settings/test-connection")
     assert result.status_code == 200
     assert seen["url"] == provider["base_url"] + "/chat/completions"

@@ -2,9 +2,8 @@
 
 import json
 import logging
-import sqlite3
 import urllib.request
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 from contextvars import ContextVar
 from datetime import datetime
 from threading import Lock
@@ -12,7 +11,8 @@ from time import perf_counter
 from uuid import uuid4
 
 from grading_agent.services.model_io.llm_client import response_usage
-from grading_agent.storage.db import utc_now
+from grading_agent.storage.db import DATABASE_ERRORS, connect, utc_now
+from grading_agent.storage.mysql import mysql_enabled
 
 _scope = ContextVar("performance_scope", default={})
 LOG = logging.getLogger(__name__)
@@ -41,7 +41,7 @@ def event(stage, elapsed_ms=0, success=True, usage=None, details=None, event_id=
     usage = usage or {}
     event_id = event_id or uuid4().hex
     try:
-        with sqlite3.connect(context["path"], timeout=30) as db:
+        with closing(connect(None if mysql_enabled() else context["path"])) as db:
             db.execute(
                 """INSERT INTO performance_events
                 (id,batch_id,assessment_id,submission_id,stage,elapsed_ms,success,
@@ -62,7 +62,8 @@ def event(stage, elapsed_ms=0, success=True, usage=None, details=None, event_id=
                     utc_now(),
                 ),
             )
-    except sqlite3.Error:
+            db.commit()
+    except DATABASE_ERRORS:
         LOG.warning("Performance event could not be recorded", exc_info=True)
     return event_id
 

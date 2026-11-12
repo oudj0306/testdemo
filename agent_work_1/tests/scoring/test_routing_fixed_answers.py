@@ -5,7 +5,7 @@ import pytest
 
 from grading_agent import config
 from grading_agent.schemas import QuestionCreate
-from grading_agent.services.recognition import local_vision as vision
+from grading_agent.services.recognition.vision import qwen as vision
 from grading_agent.services.scoring.fixed_answers import grade_fixed_answers
 from grading_agent.services.scoring.grading_cache import review_revision
 from grading_agent.services.scoring.submission_grader import _grade_question, requires_model
@@ -147,7 +147,9 @@ def test_hard_or_explicit_api_route_skips_all_local_inference(workspace, monkeyp
             {"input_tokens": 10, "output_tokens": 2, "cached_tokens": 0},
         )
 
-    monkeypatch.setattr("grading_agent.app.extract_answers_with_model", extract)
+    monkeypatch.setattr(
+        "grading_agent.services.workflows.submission_processing.extract_answers_with_model", extract
+    )
     student = upload(workspace, mark(source))
     report = student["normalization_report"]["local_recognition"]
     assert report["recognitions"][q["id"]]["route"] == "api_direct"

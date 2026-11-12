@@ -10,7 +10,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 from grading_agent.config import get_settings
 from grading_agent.services.recognition.layout.templates import layout_status
-from grading_agent.services.recognition.local_vision import runtime, transcribe
+from grading_agent.services.recognition.vision.qwen import runtime, transcribe
 from grading_agent.storage.repository import get_assessment
 
 

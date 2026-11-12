@@ -34,6 +34,7 @@ def main():
     if not 1 <= args.papers <= 1000:
         parser.error("papers must be 1..1000")
     os.environ["GRADING_DATA_DIR"] = str(data_dir)
+    os.environ.setdefault("GRADING_DB_BACKEND", "sqlite")
     os.environ.pop("OPENAI_API_KEY", None)
     sys.path.insert(0, str(args.source.resolve()))
     from grading_agent import config

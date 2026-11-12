@@ -17,6 +17,7 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 os.environ["GRADING_DATA_DIR"] = str(ROOT / "output/local-layout-real-check")
+os.environ["GRADING_DB_BACKEND"] = "sqlite"
 
 from fastapi.testclient import TestClient
 from PIL import Image, ImageDraw, ImageFont

@@ -249,7 +249,7 @@ def recognize_answers(layout, pages, questions, settings, on_answer=None):
     vision_checked = False
 
     def direct_api(q):
-        from grading_agent.services.recognition.local_vision import kind_for
+        from grading_agent.services.recognition.vision.qwen import kind_for
 
         return (
             settings.hybrid_fallback_enabled
@@ -336,7 +336,7 @@ def recognize_answers(layout, pages, questions, settings, on_answer=None):
                     blank_pixels,
                     verify_blank_part,
                 )
-                from grading_agent.services.recognition.local_vision import kind_for
+                from grading_agent.services.recognition.vision.qwen import kind_for
 
                 joint = (
                     settings.local_vision_enabled
@@ -395,7 +395,7 @@ def recognize_answers(layout, pages, questions, settings, on_answer=None):
                             except (ValueError, OSError):
                                 pass
                         if not vision_checked:
-                            from grading_agent.services.recognition.local_vision import runtime
+                            from grading_agent.services.recognition.vision.qwen import runtime
 
                             vision_checked = True
                             try:
@@ -404,7 +404,7 @@ def recognize_answers(layout, pages, questions, settings, on_answer=None):
                                 vision_error = str(exc)
                         if vision_error:
                             raise ValueError(vision_error)
-                        from grading_agent.services.recognition.local_vision import transcribe
+                        from grading_agent.services.recognition.vision.qwen import transcribe
 
                         part = {
                             "crop": crop.name,
@@ -475,7 +475,7 @@ def recognize_answers(layout, pages, questions, settings, on_answer=None):
                     blanks.append(False)
                 if joint:
                     if not vision_checked:
-                        from grading_agent.services.recognition.local_vision import runtime
+                        from grading_agent.services.recognition.vision.qwen import runtime
 
                         vision_checked = True
                         try:
@@ -484,7 +484,7 @@ def recognize_answers(layout, pages, questions, settings, on_answer=None):
                             vision_error = str(exc)
                     if vision_error:
                         raise ValueError(vision_error)
-                    from grading_agent.services.recognition.local_vision import transcribe
+                    from grading_agent.services.recognition.vision.qwen import transcribe
 
                     part = {
                         "crop": joint_crops[0].name,

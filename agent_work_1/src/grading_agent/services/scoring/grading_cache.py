@@ -23,6 +23,8 @@ from typing import Any, Iterator
 from grading_agent.config import Settings
 from grading_agent.schemas import ScoreState
 from grading_agent.services.scoring.decisions import GradeDecision
+from grading_agent.storage.db import DATABASE_ERRORS, connect
+from grading_agent.storage.mysql import mysql_enabled
 
 LOGGER = logging.getLogger(__name__)
 CACHE_VERSION = "stable-grade-v1"
@@ -35,6 +37,19 @@ def review_revision(settings: Settings, question_id: str) -> str | None:
     Read-only mode never creates/changes the main database. An unavailable main
     database disables reuse rather than trusting an unverified old entry.
     """
+    if mysql_enabled():
+        try:
+            with closing(connect()) as db:
+                row = db.execute(
+                    """SELECT COUNT(*) AS count, MAX(r.created_at) AS latest, MAX(r.id) AS last_id
+                    FROM review_events r JOIN grade_items g ON g.id=r.grade_item_id
+                    WHERE g.question_id=? AND (g.score IS NULL OR r.final_score != g.score)""",
+                    (question_id,),
+                ).fetchone()
+            return json.dumps(list(row.values()), separators=(",", ":"))
+        except DATABASE_ERRORS:
+            LOGGER.warning("Cannot verify MySQL review revision; bypassing grade cache")
+            return None
     if not settings.database_path.exists():
         return "no-database"
     try:
@@ -59,7 +74,7 @@ def review_revision(settings: Settings, question_id: str) -> str | None:
                 (question_id,),
             ).fetchone()
         return json.dumps(row, separators=(",", ":"))
-    except (sqlite3.Error, OSError):
+    except (*DATABASE_ERRORS, OSError):
         LOGGER.warning("Cannot verify grading review revision; bypassing grade cache")
         return None
 
@@ -124,7 +139,16 @@ class StableGradeCache:
         self.path = data_dir / "grading_cache.sqlite3"
 
     @contextmanager
-    def _connect(self) -> Iterator[sqlite3.Connection]:
+    def _connect(self) -> Iterator:
+        if mysql_enabled():
+            with closing(connect()) as db:
+                try:
+                    yield db
+                    db.commit()
+                except Exception:
+                    db.rollback()
+                    raise
+            return
         self.path.parent.mkdir(parents=True, exist_ok=True)
         db = sqlite3.connect(self.path, timeout=2)
         try:
@@ -152,14 +176,28 @@ class StableGradeCache:
                 try:
                     with self._connect() as db:
                         now = time.time()
-                        cursor = db.execute(
-                            """INSERT INTO grade_leases(cache_key,owner,expires_at) VALUES (?,?,?)
-                            ON CONFLICT(cache_key) DO UPDATE SET owner=excluded.owner,expires_at=excluded.expires_at
-                            WHERE grade_leases.expires_at < ?""",
-                            (key, owner, now + 150, now),
-                        )
-                        acquired = bool(cursor.rowcount)
-                except (sqlite3.Error, OSError):
+                        if mysql_enabled():
+                            db.execute("BEGIN IMMEDIATE")
+                            lease = db.execute(
+                                "SELECT expires_at FROM grade_leases WHERE cache_key=?", (key,)
+                            ).fetchone()
+                            acquired = lease is None or lease["expires_at"] < now
+                            if acquired:
+                                db.execute(
+                                    "REPLACE INTO grade_leases(cache_key,owner,expires_at) VALUES (?,?,?)",
+                                    (key, owner, now + 150),
+                                )
+                            if acquired:
+                                break
+                        else:
+                            cursor = db.execute(
+                                """INSERT INTO grade_leases(cache_key,owner,expires_at) VALUES (?,?,?)
+                                ON CONFLICT(cache_key) DO UPDATE SET owner=excluded.owner,expires_at=excluded.expires_at
+                                WHERE grade_leases.expires_at < ?""",
+                                (key, owner, now + 150, now),
+                            )
+                            acquired = bool(cursor.rowcount)
+                except (*DATABASE_ERRORS, OSError):
                     LOGGER.warning("Grade cache unavailable; continuing normal grading")
                     break
                 if not acquired:
@@ -174,7 +212,7 @@ class StableGradeCache:
                         db.execute(
                             "DELETE FROM grade_leases WHERE cache_key=? AND owner=?", (key, owner)
                         )
-                except (sqlite3.Error, OSError):
+                except (*DATABASE_ERRORS, OSError):
                     LOGGER.warning("Could not release grade-cache lease; it will expire")
 
     def get(self, key: str, max_score: float, allow_single: bool = False) -> GradeDecision | None:
@@ -212,7 +250,7 @@ class StableGradeCache:
                 f"stable_grade_cache_hit={key};source_created_at={row[2]};independent_passes={row[1]}"
             )
             return GradeDecision(**data)
-        except (sqlite3.Error, OSError, ValueError, TypeError, KeyError, AttributeError):
+        except (*DATABASE_ERRORS, OSError, ValueError, TypeError, KeyError, AttributeError):
             LOGGER.warning("Invalid or unavailable grade cache entry; grading normally")
             return None
 
@@ -236,5 +274,5 @@ class StableGradeCache:
                     "INSERT OR REPLACE INTO stable_grades(cache_key,decision,independent_passes,created_at) VALUES (?,?,?,?)",
                     (key, encoded, pass_count, datetime.now(UTC).isoformat()),
                 )
-        except (sqlite3.Error, OSError, TypeError, ValueError):
+        except (*DATABASE_ERRORS, OSError, TypeError, ValueError):
             LOGGER.warning("Could not save stable grade cache; original grade remains valid")

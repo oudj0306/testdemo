@@ -5,7 +5,7 @@ from PIL import ImageDraw
 
 from grading_agent import config
 from grading_agent.schemas import ScoreState
-from grading_agent.services.recognition import local_vision as vision
+from grading_agent.services.recognition.vision import qwen as vision
 from grading_agent.services.scoring.decisions import GradeDecision
 from grading_agent.storage.repository import get_submission
 from tests.recognition.test_local_layout import generate, mark, upload
@@ -47,7 +47,9 @@ def test_uncertain_question_alone_uses_region_api_and_scores(workspace, monkeypa
             )
         ], dict(input_tokens=10, output_tokens=4, cached_tokens=0)
 
-    monkeypatch.setattr("grading_agent.app.extract_answers_with_model", extract)
+    monkeypatch.setattr(
+        "grading_agent.services.workflows.submission_processing.extract_answers_with_model", extract
+    )
     student = upload(workspace, unreadable_image(source))
     assert len(requests) == 1 and [q["id"] for q in requests[0][0]] == [qs[1]["id"]]
     assert set(requests[0][1]["region_images"]) == {qs[1]["question_no"]}
@@ -75,7 +77,9 @@ def test_api_failure_preserves_local_answer_and_keeps_candidates_visible(workspa
         attempts.append(True)
         raise RuntimeError("provider unavailable")
 
-    monkeypatch.setattr("grading_agent.app.extract_answers_with_model", failed)
+    monkeypatch.setattr(
+        "grading_agent.services.workflows.submission_processing.extract_answers_with_model", failed
+    )
     student = upload(workspace, unreadable_image(source))
     assert len(attempts) == 1 and student["responses"][0]["raw_text"] == "B"
     report = student["normalization_report"]["local_recognition"]
@@ -198,7 +202,7 @@ def test_explicit_api_blank_is_used_with_low_confidence_review_hint(workspace, m
         lambda *args: ("4?", 0.3, "ocr"),
     )
     monkeypatch.setattr(
-        "grading_agent.app.extract_answers_with_model",
+        "grading_agent.services.workflows.submission_processing.extract_answers_with_model",
         lambda *args, **kwargs: (
             [
                 dict(
@@ -324,7 +328,9 @@ def test_local_special_cases_automatically_use_api_result(workspace, monkeypatch
             )
         ], dict(input_tokens=10, output_tokens=2, cached_tokens=0)
 
-    monkeypatch.setattr("grading_agent.app.extract_answers_with_model", extract)
+    monkeypatch.setattr(
+        "grading_agent.services.workflows.submission_processing.extract_answers_with_model", extract
+    )
     student = upload(workspace, unreadable_image(source))
     response = next(r for r in student["responses"] if r["question_id"] == qs[1]["id"])
     assert response["extraction_source"] == "api_vision_fallback" and response["raw_text"] == "42"
@@ -361,7 +367,9 @@ def test_empty_crop_api_automatically_retries_whole_page_and_accounts_both(works
             )
         ], dict(input_tokens=10, output_tokens=2, cached_tokens=0)
 
-    monkeypatch.setattr("grading_agent.app.extract_answers_with_model", extract)
+    monkeypatch.setattr(
+        "grading_agent.services.workflows.submission_processing.extract_answers_with_model", extract
+    )
     student = upload(workspace, unreadable_image(source))
     assert len(requests) == 2 and "region_images" in requests[0] and "page_images" in requests[1]
     assert len(requests[1]["page_images"]) == 1
@@ -415,7 +423,9 @@ def test_old_review_required_submission_resumes_api_without_rerunning_local(
             )
         ], dict(input_tokens=10, output_tokens=2, cached_tokens=0)
 
-    monkeypatch.setattr("grading_agent.app.extract_answers_with_model", extract)
+    monkeypatch.setattr(
+        "grading_agent.services.workflows.submission_processing.extract_answers_with_model", extract
+    )
     if route == "single":
         response = client.post(f"/api/submissions/{sid}/grade?pending_only=true")
         assert response.status_code == 200, response.text
@@ -442,7 +452,7 @@ def test_old_review_required_submission_resumes_api_without_rerunning_local(
 def test_stop_during_new_upload_keeps_bound_submission_and_completed_local_answer(
     workspace, monkeypatch
 ):
-    from grading_agent import app as module
+    from grading_agent.services.workflows import submission_processing as module
     from grading_agent.services.workflows.batch_control import control_batch
     from grading_agent.services.workflows.batch_queue import BatchQueue, enqueue
     from grading_agent.storage.repository import create_batch, get_batch
@@ -493,7 +503,7 @@ def test_stop_during_new_upload_keeps_bound_submission_and_completed_local_answe
 def test_api_inflight_result_is_saved_before_stop_and_not_requested_on_resume(
     workspace, monkeypatch
 ):
-    from grading_agent import app as module
+    from grading_agent.services.workflows import submission_processing as module
     from grading_agent.services.workflows.batch_control import control_batch
     from grading_agent.services.workflows.batch_queue import BatchQueue, enqueue_saved
     from grading_agent.storage.repository import get_batch

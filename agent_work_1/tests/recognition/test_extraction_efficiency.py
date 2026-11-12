@@ -225,7 +225,7 @@ def create_saved_submission():
 
 
 def test_retry_only_unresolved_answer_preserves_saved_text_blank_and_manual(monkeypatch):
-    from grading_agent import app as module
+    from grading_agent.services.workflows import submission_processing as module
     from grading_agent.storage.repository import get_submission, upsert_response
 
     assessment, submission, source = create_saved_submission()
@@ -275,7 +275,7 @@ def test_retry_only_unresolved_answer_preserves_saved_text_blank_and_manual(monk
 
 
 def test_prepare_reuses_all_answers_without_reopening_source(monkeypatch):
-    from grading_agent import app as module
+    from grading_agent.services.workflows import submission_processing as module
     from grading_agent.storage.db import transaction
     from grading_agent.storage.repository import upsert_response
 
@@ -298,7 +298,7 @@ def test_prepare_reuses_all_answers_without_reopening_source(monkeypatch):
 
 
 def test_teacher_edit_during_model_request_is_preserved(monkeypatch):
-    from grading_agent import app as module
+    from grading_agent.services.workflows import submission_processing as module
     from grading_agent.storage.repository import upsert_response
 
     assessment, submission, source = create_saved_submission()

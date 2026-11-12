@@ -6,7 +6,7 @@ import pytest
 from PIL import Image
 
 from grading_agent import config
-from grading_agent.services.recognition import local_vision as vision
+from grading_agent.services.recognition.vision import qwen as vision
 from tests.recognition.test_local_layout import generate, mark, upload
 from tests.recognition.test_local_layout import workspace as workspace
 

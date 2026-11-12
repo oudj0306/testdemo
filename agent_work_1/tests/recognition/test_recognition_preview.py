@@ -7,9 +7,9 @@ from fastapi.testclient import TestClient
 from PIL import Image
 
 from grading_agent import config
-from grading_agent.services.recognition import local_vision
+from grading_agent.services.recognition.vision import qwen as local_vision
 from grading_agent.storage import repository
-from grading_agent.web import optimization_api
+from grading_agent.web.routes import recognition
 
 
 @pytest.fixture
@@ -31,7 +31,7 @@ def preview(monkeypatch):
     }
     question = {"id": "q", "question_type": "short_answer"}
     monkeypatch.setattr(repository, "get_submission", lambda _: submission)
-    monkeypatch.setattr(optimization_api, "get_assessment", lambda _: dict(questions=[question]))
+    monkeypatch.setattr(recognition, "get_assessment", lambda _: dict(questions=[question]))
     calls = []
 
     def transcribe(paths, q, settings):
@@ -40,7 +40,7 @@ def preview(monkeypatch):
 
     monkeypatch.setattr(local_vision, "transcribe", transcribe)
     app = FastAPI()
-    app.include_router(optimization_api.router)
+    app.include_router(recognition.router)
     return TestClient(app), submission, calls, settings
 
 

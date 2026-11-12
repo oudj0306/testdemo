@@ -81,8 +81,12 @@ def test_upload_is_save_only_and_rename_deduplicated(monkeypatch):
     def forbidden(*args, **kwargs):
         raise AssertionError("upload must not extract or grade")
 
-    monkeypatch.setattr("grading_agent.app.persist_submission", forbidden)
-    monkeypatch.setattr("grading_agent.app.ingest_document", forbidden)
+    monkeypatch.setattr(
+        "grading_agent.services.workflows.submission_processing.persist_submission", forbidden
+    )
+    monkeypatch.setattr(
+        "grading_agent.services.workflows.submission_processing.ingest_document", forbidden
+    )
     with TestClient(app) as client:
         a = paper()
         result = client.post(
