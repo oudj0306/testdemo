@@ -19,7 +19,7 @@
 | [代码结构与维护规范](docs/代码结构与维护规范.md) | 模块职责、命名与注释、复杂度取舍、开发检查 |
 | [依赖安装与检查](docs/依赖安装与检查.md) | 基础/CPU/GPU 环境、依赖分组与缺包检查 |
 
-`docs/screenshots/` 存的是界面截图，不是教程。`.env.example` 是可选的环境变量示例，不会自动生效。`src/*.egg-info/*.txt` 是安装生成的元数据，也不是操作文档。以前散落在根目录的测试文件已归到 `tests/artifacts/`，按 `runs/`（历史运行）、`temp/`（临时文件）、`cache/`（缓存）分类；它们不属于正式答卷。
+`docs/screenshots/` 存放界面截图。`.env.example` 提供环境变量示例。`output/pytest/` 存放测试缓存和临时工作区，历史产物集中于 `output/archive/`。
 
 ## 5 分钟启动
 

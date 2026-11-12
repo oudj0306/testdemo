@@ -70,6 +70,6 @@ select = ["E4", "E7", "E9", "F", "I"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
-cache_dir = "tests/artifacts/cache/pytest"
+cache_dir = "output/pytest/cache"
 norecursedirs = ["artifacts", ".venv", ".venv-gpu", ".venv-ocr"]
 
